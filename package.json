@@ -1,0 +1,28 @@
+{
+  "name": "agente-nfe-wpp",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n api,web \"npm run dev:api:all\" \"npm run dev:web\"",
+    "dev:api:all": "cross-env ENABLE_EMBEDDED_WORKER=true npm --workspace @app/api run dev",
+    "dev:api": "npm --workspace @app/api run dev",
+    "dev:web": "npm --workspace @app/web run dev",
+    "dev:worker": "npm --workspace @app/api run dev:worker",
+    "build": "npm run build --workspaces",
+    "build:panel": "cross-env VITE_API_URL= npm run build",
+    "start:panel": "cross-env SERVE_WEB_STATIC=true ENABLE_EMBEDDED_WORKER=true npm --workspace @app/api run start",
+    "start:panel:build": "npm run build:panel && npm run start:panel",
+    "prisma:generate": "npm --workspace @app/api run prisma:generate",
+    "prisma:migrate": "npm --workspace @app/api run prisma:migrate",
+    "prisma:push": "npm --workspace @app/api run prisma:push",
+    "prisma:seed": "npm --workspace @app/api run prisma:seed"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3"
+  }
+}
