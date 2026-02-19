@@ -15,7 +15,7 @@ async function bootstrap() {
 
   if (env.ENABLE_EMBEDDED_WORKER) {
     await startHourlyNfeScheduler({
-      runOnStart: true,
+      runOnStart: false,
       tag: "[api-worker]",
     });
   }

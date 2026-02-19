@@ -6,7 +6,7 @@ import { disconnectRedisClients } from "./lib/redis.js";
 async function bootstrapWorker() {
   await Promise.all([
     startHourlyNfeScheduler({
-      runOnStart: true,
+      runOnStart: false,
       tag: "[worker]",
     }),
     startOutboundDispatchWorker({
