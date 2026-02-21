@@ -89,7 +89,7 @@ function ToastItem({ message, onDismiss }: { message: ToastMessage; onDismiss: (
         >
             <Icon className="mt-0.5 h-4 w-4 shrink-0" />
             <p className="flex-1 text-sm font-semibold leading-snug">{message.text}</p>
-            <button type="button" onClick={handleManualDismiss} className="shrink-0 rounded p-0.5 transition hover:bg-white/10">
+            <button type="button" onClick={handleManualDismiss} className="shrink-0 rounded p-0.5 transition hover:bg-accent">
                 <X className="h-3.5 w-3.5" />
             </button>
         </div>

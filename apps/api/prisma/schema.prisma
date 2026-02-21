@@ -16,6 +16,9 @@ enum UserRole {
 enum CompanyAiType {
   nfe_import
   barber_booking
+  billing
+  restaurant_delivery
+  clinic_booking
 }
 
 enum NfeStatus {
@@ -89,6 +92,7 @@ model Company {
   email          String                  @unique
   evolutionInstanceName String?          @unique
   aiType         CompanyAiType           @default(nfe_import)
+  bookingSector  String                  @default("barber")
   active         Boolean                 @default(true)
   createdAt      DateTime                @default(now())
   updatedAt      DateTime                @updatedAt

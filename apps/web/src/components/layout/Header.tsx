@@ -1,5 +1,6 @@
 import { Menu, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { Button } from "../ui/Button";
+import { ThemeToggle } from "../theme-toggle";
 
 interface HeaderProps {
   title: string;
@@ -12,8 +13,8 @@ interface HeaderProps {
 
 export function Header({ title, subtitle, onMenuClick, onToggleSidebar, isSidebarCollapsed, sessionCountdownLabel }: HeaderProps) {
   return (
-    <header className="border-b border-white/[0.06] bg-[#0a0a0a]/80 px-4 py-3 backdrop-blur-xl md:px-6">
-      <div className="flex items-center justify-between gap-4">
+    <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-background/80 px-4 backdrop-blur-xl md:px-6">
+      <div className="flex w-full items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={onMenuClick}>
             <Menu className="h-5 w-5" />
@@ -22,16 +23,18 @@ export function Header({ title, subtitle, onMenuClick, onToggleSidebar, isSideba
             {isSidebarCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
           </Button>
           <div>
-            <h1 className="text-lg font-bold text-white sm:text-xl">{title}</h1>
-            {subtitle ? <p className="hidden text-xs text-white/35 md:block">{subtitle}</p> : null}
+            <h1 className="text-lg font-bold text-foreground sm:text-xl">{title}</h1>
+            {subtitle ? <p className="hidden text-xs text-muted-foreground md:block">{subtitle}</p> : null}
           </div>
         </div>
-
-        {sessionCountdownLabel ? (
-          <div className="shrink-0 rounded-full border border-green-500/25 bg-green-500/10 px-3 py-1 text-xs font-semibold text-green-400">
-            {sessionCountdownLabel}
-          </div>
-        ) : null}
+        <div className="flex items-center gap-2">
+          {sessionCountdownLabel ? (
+            <div className="shrink-0 rounded-full border border-green-500/25 bg-green-500/10 px-3 py-1 text-xs font-semibold text-green-700 dark:text-green-400">
+              {sessionCountdownLabel}
+            </div>
+          ) : null}
+          <ThemeToggle />
+        </div>
       </div>
     </header>
   );

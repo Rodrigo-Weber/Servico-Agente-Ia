@@ -356,20 +356,21 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
               name: true,
               cnpj: true,
               aiType: true,
+              bookingSector: true,
               active: true,
             },
           }),
           barberProfileId
             ? prisma.barberProfile.findUnique({
-                where: { id: barberProfileId },
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  phoneE164: true,
-                  active: true,
-                },
-              })
+              where: { id: barberProfileId },
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phoneE164: true,
+                active: true,
+              },
+            })
             : Promise.resolve(null),
         ]);
 
@@ -884,10 +885,18 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
           return reply.code(404).send({ message: "Barbeiro nao encontrado" });
         }
 
-        await prisma.barberProfile.update({
-          where: { id: barber.id },
-          data: { active: false },
-        });
+        try {
+          await prisma.barberProfile.delete({
+            where: { id: barber.id },
+          });
+        } catch (error: any) {
+          if (error.code === 'P2003') {
+            return reply.code(400).send({
+              message: "Não é possível apagar pois há histórico de agendamentos. Por favor, apenas desative o perfil."
+            });
+          }
+          throw error;
+        }
 
         return reply.code(204).send();
       });
@@ -1138,10 +1147,18 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
           return reply.code(404).send({ message: "Servico nao encontrado" });
         }
 
-        await prisma.barberService.update({
-          where: { id: service.id },
-          data: { active: false },
-        });
+        try {
+          await prisma.barberService.delete({
+            where: { id: service.id },
+          });
+        } catch (error: any) {
+          if (error.code === 'P2003') {
+            return reply.code(400).send({
+              message: "Não é possível apagar pois há histórico de agendamentos. Por favor, apenas desative o serviço."
+            });
+          }
+          throw error;
+        }
 
         return reply.code(204).send();
       });

@@ -3,10 +3,11 @@ import { api, UNAUTHORIZED_EVENT_NAME } from "./api";
 import { AdminPanel } from "./components/AdminPanel";
 import { BarberOwnerPanel } from "./components/BarberOwnerPanel";
 import { BarberStaffPanel } from "./components/BarberStaffPanel";
+import { BillingPanel } from "./components/billing/BillingPanel";
 import { CompanyPanel } from "./components/CompanyPanel";
 import { LoginForm } from "./components/LoginForm";
-import { SaasPresentation } from "./components/SaasPresentation";
 import { DashboardLayout } from "./components/layout/DashboardLayout";
+import { OwnerDashboard } from "./components/dashboard/OwnerDashboard";
 import { AuthSession } from "./types";
 
 const STORAGE_KEY = "weber_servicos_auth";
@@ -172,6 +173,28 @@ export default function App() {
       return barberCompanyTitles[activeView] ?? barberCompanyTitles.dashboard;
     }
 
+    if (session.user.serviceType === "billing") {
+      const billingTitles: Record<string, { title: string; subtitle: string }> = {
+        dashboard: {
+          title: "Painel de Cobranças",
+          subtitle: "Resumo financeiro e clientes ativos",
+        },
+        collections: {
+          title: "Cobranças",
+          subtitle: "Gerencie boletos e notas fiscais por cliente",
+        },
+        crm: {
+          title: "CRM",
+          subtitle: "Histórico de mensagens do WhatsApp e atendimento",
+        },
+        settings: {
+          title: "Configurações",
+          subtitle: "Configurações do serviço de cobrança",
+        },
+      };
+      return billingTitles[activeView] ?? billingTitles.dashboard;
+    }
+
     const nfeCompanyTitles: Record<string, { title: string; subtitle: string }> = {
       dashboard: {
         title: "Painel da Empresa",
@@ -292,10 +315,6 @@ export default function App() {
     setPathname(to);
   }
 
-  if (pathname === "/apresentacao") {
-    return <SaasPresentation onEnterPlatform={() => navigate("/")} />;
-  }
-
   if (!session) {
     return <LoginForm onLogin={handleLogin} notice={authNotice} onDismissNotice={() => setAuthNotice("")} />;
   }
@@ -311,11 +330,17 @@ export default function App() {
       sessionCountdownLabel={formatSessionCountdown(sessionRemainingSeconds)}
     >
       {session.user.role === "admin" ? <AdminPanel token={session.accessToken} activeView={activeView} /> : null}
-      {session.user.role === "company" && session.user.serviceType === "nfe_import" ? (
+      {session.user.role === "company" && activeView === "dashboard" ? (
+        <OwnerDashboard session={session} token={session.accessToken} />
+      ) : null}
+      {session.user.role === "company" && session.user.serviceType === "nfe_import" && activeView !== "dashboard" ? (
         <CompanyPanel token={session.accessToken} activeView={activeView} />
       ) : null}
-      {session.user.role === "company" && session.user.serviceType === "barber_booking" ? (
+      {session.user.role === "company" && session.user.serviceType === "barber_booking" && activeView !== "dashboard" ? (
         <BarberOwnerPanel token={session.accessToken} activeView={activeView} />
+      ) : null}
+      {session.user.role === "company" && session.user.serviceType === "billing" && activeView !== "dashboard" ? (
+        <BillingPanel token={session.accessToken} activeView={activeView} />
       ) : null}
       {session.user.role === "barber" ? <BarberStaffPanel token={session.accessToken} activeView={activeView} /> : null}
     </DashboardLayout>

@@ -55,6 +55,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         email: user.email,
         companyId: user.companyId,
         serviceType: user.company?.aiType ?? null,
+        bookingSector: user.company?.bookingSector ?? undefined,
       },
       ...tokens,
     });
@@ -85,6 +86,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
               company: {
                 select: {
                   aiType: true,
+                  bookingSector: true,
                 },
               },
             },

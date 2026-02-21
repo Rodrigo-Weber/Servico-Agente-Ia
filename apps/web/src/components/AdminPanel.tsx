@@ -33,6 +33,7 @@ interface AdminPanelProps {
 }
 
 type NumberDraftMap = Record<string, { phone: string; active: boolean }>;
+const DAILY_SYNC_HOUR = 18;
 
 function normalizeStatus(value: unknown): string {
   if (typeof value !== "string") {
@@ -124,6 +125,31 @@ function getLiveWaitSeconds(waitSeconds: number | null | undefined, generatedAt:
   return Math.max(0, waitSeconds - elapsedSeconds);
 }
 
+function getNextDailySyncAt(now: Date): Date {
+  const next = new Date(now);
+  next.setHours(DAILY_SYNC_HOUR, 0, 0, 0);
+
+  if (next.getTime() <= now.getTime()) {
+    next.setDate(next.getDate() + 1);
+  }
+
+  return next;
+}
+
+function getSecondsUntilNextDailySync(nowMs: number): number {
+  const now = new Date(nowMs);
+  const next = getNextDailySyncAt(now);
+  return Math.max(0, Math.ceil((next.getTime() - nowMs) / 1000));
+}
+
+function formatScheduleCountdown(seconds: number): string {
+  if (seconds <= 0) {
+    return "agora";
+  }
+
+  return formatWaitSeconds(seconds);
+}
+
 function getCertificateTone(status: string): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
   if (status === "valid") return { label: "Valido", variant: "default" };
   if (status === "expiring") return { label: "Expirando", variant: "secondary" };
@@ -133,7 +159,9 @@ function getCertificateTone(status: string): { label: string; variant: "default"
 }
 
 function getServiceLabel(aiType: Exclude<ServiceType, null>): string {
-  return aiType === "barber_booking" ? "Barbearia (Agendamento)" : "NF-e (Importacao)";
+  if (aiType === "barber_booking") return "Motor de Agendamentos (IA)";
+  if (aiType === "billing") return "Cobranças e CRM";
+  return "NF-e (Importacao)";
 }
 
 function buildNumberDraftMap(company: Company | null): NumberDraftMap {
@@ -164,6 +192,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
     password: "",
     evolutionInstanceName: "",
     aiType: "nfe_import" as Exclude<ServiceType, null>,
+    bookingSector: "barber" as "barber" | "clinic" | "car_wash" | "generic",
     active: true,
   });
 
@@ -174,6 +203,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
     password: "",
     evolutionInstanceName: "",
     aiType: "nfe_import" as Exclude<ServiceType, null>,
+    bookingSector: "barber" as "barber" | "clinic" | "car_wash" | "generic",
     active: true,
   });
 
@@ -247,6 +277,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
         password: "",
         evolutionInstanceName: "",
         aiType: "nfe_import" as Exclude<ServiceType, null>,
+        bookingSector: "barber" as const,
         active: true,
       });
       return;
@@ -259,6 +290,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
       password: "",
       evolutionInstanceName: selectedCompany.evolutionInstanceName || "",
       aiType: selectedCompany.aiType,
+      bookingSector: selectedCompany.bookingSector || "barber",
       active: selectedCompany.active,
     });
   }, [selectedCompany]);
@@ -303,6 +335,9 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
       return acc + ((waitSeconds ?? 0) > 0 ? 1 : 0);
     }, 0);
   }, [monitoring, monitoringTick]);
+
+  const nextScheduledSyncAt = useMemo(() => getNextDailySyncAt(new Date(monitoringTick)), [monitoringTick]);
+  const secondsUntilScheduledSync = useMemo(() => getSecondsUntilNextDailySync(monitoringTick), [monitoringTick]);
 
   async function loadAll() {
     setLoading(true);
@@ -358,6 +393,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
         password: createForm.password,
         evolutionInstanceName: createForm.evolutionInstanceName || undefined,
         aiType: createForm.aiType,
+        bookingSector: createForm.bookingSector,
         active: createForm.active,
       });
 
@@ -368,6 +404,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
         password: "",
         evolutionInstanceName: "",
         aiType: "nfe_import",
+        bookingSector: "barber" as const,
         active: true,
       });
       setFeedback("Empresa criada com sucesso.");
@@ -393,6 +430,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
       password?: string;
       evolutionInstanceName?: string | null;
       aiType?: Exclude<ServiceType, null>;
+      bookingSector?: "barber" | "clinic" | "car_wash" | "generic";
       active?: boolean;
     } = {
       cnpj: editForm.cnpj,
@@ -400,6 +438,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
       email: editForm.email,
       evolutionInstanceName: editForm.evolutionInstanceName || null,
       aiType: editForm.aiType,
+      bookingSector: editForm.bookingSector,
       active: editForm.active,
     };
 
@@ -626,10 +665,10 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
     return (
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tempo de espera atualizado em tempo real</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sync DF-e diario as 18:00</p>
           <div className="flex items-center gap-2">
             <select
-              className="h-9 rounded-lg border border-white/10 bg-dark-700 px-2 text-xs font-semibold text-muted-foreground"
+              className="h-9 rounded-lg border border-input bg-card px-2 text-xs font-semibold text-muted-foreground"
               value={jobsPageSize}
               onChange={(event) => {
                 setJobsPage(1);
@@ -647,8 +686,17 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
           </div>
         </div>
 
+        <div className="rounded-xl border border-border bg-muted/50 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Agenda de sincronizacao</p>
+          <p className="mt-1 text-sm font-semibold">O sync de NF-e roda apenas as 18:00, todos os dias.</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Proxima execucao: {formatDateTime(nextScheduledSyncAt.toISOString())} | Faltam{" "}
+            {formatScheduleCountdown(secondsUntilScheduledSync)}
+          </p>
+        </div>
+
         {loadingMonitoring ? (
-          <div className="flex items-center gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.04] p-6">
+          <div className="flex items-center gap-3 rounded-2xl border border-border bg-muted/50 p-6">
             <RefreshCw className="h-5 w-5 animate-spin text-green-400" />
             <span className="text-sm font-semibold text-muted-foreground">Atualizando dados operacionais...</span>
           </div>
@@ -689,7 +737,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                 const certTone = getCertificateTone(company.certificate.status);
                 const liveWaitSeconds = getLiveWaitSeconds(company.sync.waitSeconds, monitoring?.generatedAt, monitoringTick);
                 return (
-                  <div key={company.companyId} className="rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-2.5">
+                  <div key={company.companyId} className="rounded-xl border border-border bg-muted/50 px-3 py-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <p className="font-semibold">{company.name}</p>
@@ -698,7 +746,8 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                       <div className="flex items-center gap-2">
                         <Badge variant={company.active ? "default" : "secondary"}>{company.active ? "Ativa" : "Inativa"}</Badge>
                         <Badge variant={certTone.variant}>{certTone.label}</Badge>
-                        {(liveWaitSeconds ?? 0) > 0 ? <Badge variant="outline">Aguardando sync</Badge> : null}
+                        <Badge variant="outline">Sync as 18:00</Badge>
+                        {(liveWaitSeconds ?? 0) > 0 ? <Badge variant="secondary">Cooldown tecnico</Badge> : null}
                       </div>
                     </div>
 
@@ -707,8 +756,10 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                       <p>Dias restantes: {company.certificate.daysRemaining ?? "-"}</p>
                       <p>Ultimo sync: {formatDateTime(company.sync.lastSyncAt)}</p>
                       <p>Status sync: {company.sync.lastSyncStatus ?? "-"}</p>
-                      <p>Proximo sync: {formatDateTime(company.sync.nextAllowedSyncAt)}</p>
-                      <p>Tempo de espera: {formatWaitSeconds(liveWaitSeconds)}</p>
+                      <p>Agenda: Diario as 18:00</p>
+                      <p>Tempo ate 18:00: {formatScheduleCountdown(secondsUntilScheduledSync)}</p>
+                      <p>Proximo ciclo: {formatDateTime(nextScheduledSyncAt.toISOString())}</p>
+                      <p>Cooldown tecnico: {formatWaitSeconds(liveWaitSeconds)}</p>
                       <p>
                         NF-e: imp {company.nfes.imported} | det {company.nfes.detected} | falha {company.nfes.failed}
                       </p>
@@ -737,7 +788,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
               {(monitoring?.recentJobs ?? []).length === 0 ? <p className="text-sm text-muted-foreground">Nenhum job encontrado.</p> : null}
 
               {(monitoring?.recentJobs ?? []).map((job) => (
-                <div key={job.id} className="rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-2">
+                <div key={job.id} className="rounded-xl border border-border bg-muted/50 px-3 py-2">
                   <div className="flex items-center justify-between gap-2">
                     <Badge variant={job.status === "success" ? "default" : job.status === "running" ? "secondary" : "destructive"}>
                       {job.status}
@@ -756,7 +807,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                 </div>
               ))}
 
-              <div className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-2">
+              <div className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-3 py-2">
                 <p className="text-xs text-muted-foreground">
                   Pagina {monitoring?.jobsPagination.page ?? jobsPage} de {monitoring?.jobsPagination.totalPages ?? 1} | Total:{" "}
                   {monitoring?.jobsPagination.total ?? 0}
@@ -844,7 +895,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
               </p>
 
               {qrCode ? (
-                <div className="grid place-items-center rounded-2xl border border-dashed border-white/20 bg-white p-5">
+                <div className="grid place-items-center rounded-2xl border border-dashed border-border bg-white p-5">
                   {qrCode.startsWith("data:image") ? (
                     <img src={qrCode} alt="QR Code" className="h-auto w-full max-w-[230px] rounded-md" />
                   ) : (
@@ -864,14 +915,14 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
               <CardDescription>Configure o comportamento da IA por categoria de servico e personalize por empresa.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
-              <div className="flex gap-1 rounded-lg bg-dark-700/60 p-1">
+              <div className="flex gap-1 rounded-lg bg-muted p-1">
                 <button
                   type="button"
                   className={cn(
                     "flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition-all",
                     activePromptTab === "nfe_import"
                       ? "bg-green-500/20 text-green-400 shadow-sm"
-                      : "text-muted-foreground hover:text-white",
+                      : "text-muted-foreground hover:text-foreground",
                   )}
                   onClick={() => setActivePromptTab("nfe_import")}
                 >
@@ -883,20 +934,20 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                     "flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition-all",
                     activePromptTab === "barber_booking"
                       ? "bg-green-500/20 text-green-400 shadow-sm"
-                      : "text-muted-foreground hover:text-white",
+                      : "text-muted-foreground hover:text-foreground",
                   )}
                   onClick={() => setActivePromptTab("barber_booking")}
                 >
-                  Barbearia (Agendamento)
+                  Motor Agendamento (IA)
                 </button>
               </div>
 
               <form onSubmit={handleSaveGlobalPrompt} className="space-y-2">
                 <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Prompt global — {activePromptTab === "nfe_import" ? "NF-e" : "Barbearia"}
+                  Prompt global — {activePromptTab === "nfe_import" ? "NF-e" : "Agendamento"}
                 </label>
                 <textarea
-                  className="min-h-[130px] w-full rounded-xl border border-white/10 bg-dark-700/80 px-3 py-2 text-sm text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                  className="min-h-[130px] w-full rounded-xl border border-input bg-background/50 px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
                   value={activePromptTab === "nfe_import" ? nfePrompt : barberPrompt}
                   onChange={(event) =>
                     activePromptTab === "nfe_import"
@@ -907,14 +958,14 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                 />
                 <FeedbackButton type="submit" size="sm">
                   <Save className="mr-1.5 h-4 w-4" />
-                  Salvar {activePromptTab === "nfe_import" ? "NF-e" : "Barbearia"}
+                  Salvar {activePromptTab === "nfe_import" ? "NF-e" : "Agendamento"}
                 </FeedbackButton>
               </form>
 
               <div className="space-y-2">
                 <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Empresa para prompt especifico</label>
                 <select
-                  className="h-10 w-full rounded-xl border border-white/10 bg-dark-700/80 px-3 text-sm text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                  className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
                   value={selectedCompanyId}
                   onChange={(event) => setSelectedCompanyId(event.target.value)}
                 >
@@ -930,7 +981,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
               <form onSubmit={handleSaveCompanyPrompt} className="space-y-2">
                 <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Prompt por empresa</label>
                 <textarea
-                  className="min-h-[120px] w-full rounded-xl border border-white/10 bg-dark-700/80 px-3 py-2 text-sm text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                  className="min-h-[120px] w-full rounded-xl border border-input bg-background/50 px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
                   value={companyPrompt}
                   onChange={(event) => setCompanyPrompt(event.target.value)}
                   placeholder="Se vazio, a empresa usa o prompt global da sua categoria."
@@ -1009,7 +1060,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">SEFAZ tpAmb</label>
                   <select
-                    className="h-10 w-full rounded-xl border border-white/10 bg-dark-700/80 px-3 text-sm text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                    className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
                     value={operationalSettings.sefazTpAmb}
                     onChange={(event) => setOperationalField("sefazTpAmb", Number(event.target.value) as 1 | 2)}
                   >
@@ -1111,20 +1162,33 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                 <Input placeholder="Email da empresa" type="email" value={createForm.email} onChange={(e) => setCreateForm((prev) => ({ ...prev, email: e.target.value }))} required />
                 <Input placeholder="Senha inicial" type="password" minLength={8} value={createForm.password} onChange={(e) => setCreateForm((prev) => ({ ...prev, password: e.target.value }))} required />
                 <select
-                  className="h-10 w-full rounded-xl border border-white/10 bg-dark-700/80 px-3 text-sm text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                  className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
                   value={createForm.aiType}
                   onChange={(e) => setCreateForm((prev) => ({ ...prev, aiType: e.target.value as Exclude<ServiceType, null> }))}
                 >
                   <option value="nfe_import">NF-e (Importacao)</option>
-                  <option value="barber_booking">Barbearia (Agendamento)</option>
+                  <option value="barber_booking">Motor de Agendamentos (IA)</option>
+                  <option value="billing">Cobranças e CRM</option>
                 </select>
                 {createForm.aiType === "barber_booking" ? (
-                  <Input
-                    placeholder="Nome da instancia Evolution (ex: barbearia_matriz)"
-                    value={createForm.evolutionInstanceName}
-                    onChange={(e) => setCreateForm((prev) => ({ ...prev, evolutionInstanceName: e.target.value }))}
-                    required
-                  />
+                  <>
+                    <select
+                      className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                      value={createForm.bookingSector}
+                      onChange={(e) => setCreateForm((prev) => ({ ...prev, bookingSector: e.target.value as any }))}
+                    >
+                      <option value="barber">Barbearias e Salões de Beleza</option>
+                      <option value="car_wash">Lava Jato e Estética Automotiva</option>
+                      <option value="clinic">Clínicas e Consultórios</option>
+                      <option value="generic">Agendamento Genérico</option>
+                    </select>
+                    <Input
+                      placeholder="Nome da instancia Evolution (ex: barbearia_matriz)"
+                      value={createForm.evolutionInstanceName}
+                      onChange={(e) => setCreateForm((prev) => ({ ...prev, evolutionInstanceName: e.target.value }))}
+                      required
+                    />
+                  </>
                 ) : null}
                 <label className="flex items-center gap-2 text-sm text-muted-foreground">
                   <input type="checkbox" checked={createForm.active} onChange={(e) => setCreateForm((prev) => ({ ...prev, active: e.target.checked }))} />
@@ -1169,7 +1233,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                   onClick={() => setSelectedCompanyId(company.id)}
                   className={cn(
                     "w-full rounded-xl border px-3 py-2 text-left transition",
-                    selectedCompanyId === company.id ? "border-green-500/30 bg-green-500/10" : "border-white/[0.06] bg-white/[0.04] hover:bg-white/[0.08]",
+                    selectedCompanyId === company.id ? "border-green-500/30 bg-green-500/10" : "border-border bg-muted/50 hover:bg-muted/50",
                   )}
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -1202,20 +1266,33 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                     <Input placeholder="Email da empresa" type="email" value={editForm.email} onChange={(e) => setEditForm((prev) => ({ ...prev, email: e.target.value }))} required />
                     <Input placeholder="Nova senha (opcional)" type="password" value={editForm.password} onChange={(e) => setEditForm((prev) => ({ ...prev, password: e.target.value }))} />
                     <select
-                      className="h-10 w-full rounded-xl border border-white/10 bg-dark-700/80 px-3 text-sm text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                      className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
                       value={editForm.aiType}
                       onChange={(e) => setEditForm((prev) => ({ ...prev, aiType: e.target.value as Exclude<ServiceType, null> }))}
                     >
                       <option value="nfe_import">NF-e (Importacao)</option>
-                      <option value="barber_booking">Barbearia (Agendamento)</option>
+                      <option value="barber_booking">Motor de Agendamentos (IA)</option>
+                      <option value="billing">Cobranças e CRM</option>
                     </select>
                     {editForm.aiType === "barber_booking" ? (
-                      <Input
-                        placeholder="Nome da instancia Evolution"
-                        value={editForm.evolutionInstanceName}
-                        onChange={(e) => setEditForm((prev) => ({ ...prev, evolutionInstanceName: e.target.value }))}
-                        required
-                      />
+                      <>
+                        <select
+                          className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                          value={editForm.bookingSector}
+                          onChange={(e) => setEditForm((prev) => ({ ...prev, bookingSector: e.target.value as any }))}
+                        >
+                          <option value="barber">Barbearias e Salões de Beleza</option>
+                          <option value="car_wash">Lava Jato e Estética Automotiva</option>
+                          <option value="clinic">Clínicas e Consultórios</option>
+                          <option value="generic">Agendamento Genérico</option>
+                        </select>
+                        <Input
+                          placeholder="Nome da instancia Evolution"
+                          value={editForm.evolutionInstanceName}
+                          onChange={(e) => setEditForm((prev) => ({ ...prev, evolutionInstanceName: e.target.value }))}
+                          required
+                        />
+                      </>
                     ) : null}
 
                     <label className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -1261,7 +1338,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                           const isDeleting = deletingNumberId === number.id;
 
                           return (
-                            <div key={number.id} className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-2.5">
+                            <div key={number.id} className="rounded-xl border border-border bg-muted/50 p-2.5">
                               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                                 <Input
                                   value={draft.phone}
@@ -1310,7 +1387,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                       </div>
                     </>
                   ) : (
-                    <div className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-3">
+                    <div className="rounded-xl border border-border bg-muted/50 p-3">
                       <p className="text-sm font-semibold">Regra de atendimento da barbearia</p>
                       <p className="mt-1 text-sm text-muted-foreground">
                         Este servico responde qualquer numero que falar com a instancia configurada.
@@ -1351,7 +1428,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
           <CardContent className="space-y-2.5">
             {companies.length === 0 ? <p className="text-sm text-muted-foreground">Ainda nao existem empresas cadastradas.</p> : null}
             {companies.slice(0, 6).map((company) => (
-              <div key={company.id} className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-2">
+              <div key={company.id} className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-3 py-2">
                 <div>
                   <p className="font-semibold">{company.name}</p>
                   <p className="text-xs text-muted-foreground">{company.email}</p>
@@ -1376,7 +1453,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
             <CardDescription>Controle rapido da sessao usada no atendimento automatizado.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-3">
+            <div className="rounded-xl border border-border bg-muted/50 p-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status atual</p>
               <div className="mt-2 flex items-center gap-2">
                 <Badge variant={statusTone.badge}>{statusTone.text}</Badge>
@@ -1424,7 +1501,7 @@ function StatCard({
   const valueIsNumeric = typeof value === "number";
 
   return (
-    <Card className="h-full min-h-[108px] border-white/5 bg-gradient-to-b from-white/[0.08] to-transparent transition-all hover:border-green-500/20 hover:bg-white/[0.03]">
+    <Card className="h-full min-h-[108px] border-border bg-gradient-to-b from-white/[0.08] to-transparent transition-all hover:border-green-500/20 hover:bg-muted/50">
       <CardContent className="grid h-full grid-cols-[auto_minmax(0,1fr)] items-center gap-4 p-4 sm:p-5">
         <div className="grid h-12 w-12 place-items-center rounded-xl bg-green-500/10 text-green-400 ring-1 ring-inset ring-green-500/20">
           <Icon className="h-6 w-6" />
@@ -1433,7 +1510,7 @@ function StatCard({
           <p className="truncate text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground/80">{label}</p>
           <p
             className={cn(
-              "mt-1 truncate font-display font-bold leading-none text-white",
+              "mt-1 truncate font-display font-bold leading-none text-foreground",
               valueIsNumeric ? "text-3xl" : "text-2xl sm:text-[1.8rem]",
             )}
           >
@@ -1450,7 +1527,7 @@ function FeedbackBox({ message }: { message: string }) {
   if (!message) return null;
   return (
     <div className="fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-4">
-      <div className="flex items-center gap-2 rounded-xl border border-green-500/20 bg-dark-900/90 px-4 py-3 text-sm font-semibold text-green-400 shadow-2xl backdrop-blur-md">
+      <div className="flex items-center gap-2 rounded-xl border border-green-500/20 bg-background/90 px-4 py-3 text-sm font-semibold text-green-400 shadow-2xl backdrop-blur-md">
         <div className="flex h-6 w-6 items-center justify-center rounded-full bg-green-500/10">
           <Check className="h-3.5 w-3.5" />
         </div>

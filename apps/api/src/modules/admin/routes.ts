@@ -17,6 +17,7 @@ const createCompanySchema = z.object({
   password: z.string().min(8),
   evolutionInstanceName: z.string().trim().min(1).optional(),
   aiType: z.nativeEnum(CompanyAiType).default("nfe_import"),
+  bookingSector: z.enum(["barber", "clinic", "car_wash", "generic"]).default("barber"),
   active: z.boolean().default(true),
 });
 
@@ -27,6 +28,7 @@ const updateCompanySchema = z.object({
   password: z.string().min(8).optional(),
   evolutionInstanceName: z.string().trim().min(1).nullable().optional(),
   aiType: z.nativeEnum(CompanyAiType).optional(),
+  bookingSector: z.enum(["barber", "clinic", "car_wash", "generic"]).optional(),
   active: z.boolean().optional(),
 });
 
@@ -337,6 +339,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
               email: data.email,
               evolutionInstanceName: data.aiType === "barber_booking" ? requestedInstanceName : null,
               aiType: data.aiType,
+              bookingSector: data.bookingSector,
               active: data.active,
             },
           });
@@ -398,8 +401,12 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
         const params = z.object({ id: z.string().min(1) }).safeParse(request.params);
         const parsed = updateCompanySchema.safeParse(request.body);
 
-        if (!params.success || !parsed.success) {
-          return reply.code(400).send({ message: "Payload invalido" });
+        if (!params.success) {
+          return reply.code(400).send({ message: "ID invalido", errors: params.error.flatten().fieldErrors });
+        }
+
+        if (!parsed.success) {
+          return reply.code(400).send({ message: "Payload invalido", errors: parsed.error.flatten().fieldErrors });
         }
 
         const { id } = params.data;
@@ -455,6 +462,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
               email: data.email,
               evolutionInstanceName: nextAiType === "barber_booking" ? nextInstanceName : null,
               aiType: data.aiType,
+              bookingSector: data.bookingSector,
               active: data.active,
             },
           });
@@ -832,9 +840,9 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
           ]);
 
         const companyIds = companies.map((company) => company.id);
-	        const lastJobsRows =
-	          companyIds.length > 0
-	            ? await prisma.jobRun.findMany({
+        const lastJobsRows =
+          companyIds.length > 0
+            ? await prisma.jobRun.findMany({
               where: {
                 jobName: "hourly_nfe_sync",
                 companyId: { in: companyIds },
@@ -847,23 +855,23 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
                 startedAt: true,
                 endedAt: true,
                 error: true,
-	              },
-	            })
-	            : [];
-	        const recentJobsSafe = recentJobs.map((job) => ({
-	          ...job,
-	          error: sanitizeSyncJobError(job.error),
-	        }));
-	        const lastJobsRowsSafe = lastJobsRows.map((job) => ({
-	          ...job,
-	          error: sanitizeSyncJobError(job.error),
-	        }));
+              },
+            })
+            : [];
+        const recentJobsSafe = recentJobs.map((job) => ({
+          ...job,
+          error: sanitizeSyncJobError(job.error),
+        }));
+        const lastJobsRowsSafe = lastJobsRows.map((job) => ({
+          ...job,
+          error: sanitizeSyncJobError(job.error),
+        }));
 
-	        const lastJobByCompany = new Map<string, (typeof lastJobsRows)[number]>();
-	        for (const job of lastJobsRowsSafe) {
-	          if (!job.companyId || lastJobByCompany.has(job.companyId)) {
-	            continue;
-	          }
+        const lastJobByCompany = new Map<string, (typeof lastJobsRows)[number]>();
+        for (const job of lastJobsRowsSafe) {
+          if (!job.companyId || lastJobByCompany.has(job.companyId)) {
+            continue;
+          }
 
           lastJobByCompany.set(job.companyId, job);
         }
@@ -979,11 +987,11 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
               outbound: messageDirectionMap.out ?? 0,
               failed: failedMessages24,
             },
-	          },
-	          recentJobs: recentJobsSafe,
-	          jobsPagination: {
-	            page: jobsPage,
-	            pageSize: jobsPageSize,
+          },
+          recentJobs: recentJobsSafe,
+          jobsPagination: {
+            page: jobsPage,
+            pageSize: jobsPageSize,
             total: recentJobsTotal,
             totalPages: Math.max(1, Math.ceil(recentJobsTotal / jobsPageSize)),
           },

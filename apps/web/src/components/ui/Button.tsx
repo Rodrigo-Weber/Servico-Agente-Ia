@@ -14,13 +14,13 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       destructive:
         "bg-gradient-to-r from-red-600 to-red-700 text-white shadow-[0_0_15px_rgba(220,38,38,0.2)] hover:shadow-[0_0_25px_rgba(220,38,38,0.35)]",
       outline:
-        "border border-white/15 bg-white/[0.04] text-white/80 hover:bg-white/[0.08] hover:text-white hover:border-white/25",
+        "border border-border bg-background hover:bg-accent hover:text-accent-foreground text-foreground",
       secondary:
-        "bg-white/[0.06] text-white/80 hover:bg-white/[0.1] hover:text-white",
+        "bg-secondary text-secondary-foreground hover:bg-secondary/80",
       ghost:
-        "text-white/50 hover:bg-white/[0.06] hover:text-white/90",
+        "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
       link:
-        "text-green-400 underline-offset-4 hover:underline hover:text-green-300",
+        "text-green-500 underline-offset-4 hover:underline",
     };
 
     const sizes = {

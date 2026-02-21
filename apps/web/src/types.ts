@@ -1,5 +1,5 @@
 export type Role = "admin" | "company" | "barber";
-export type ServiceType = "nfe_import" | "barber_booking" | null;
+export type ServiceType = "nfe_import" | "barber_booking" | "billing" | "restaurant_delivery" | "clinic_booking" | null;
 
 export type CertificateStatus = "missing" | "valid" | "expiring" | "expired" | "unknown";
 
@@ -9,6 +9,7 @@ export interface AuthUser {
   email: string;
   companyId: string | null;
   serviceType: ServiceType;
+  bookingSector?: "barber" | "clinic" | "car_wash" | "generic";
 }
 
 export interface AuthSession {
@@ -31,6 +32,7 @@ export interface Company {
   email: string;
   evolutionInstanceName: string | null;
   aiType: Exclude<ServiceType, null>;
+  bookingSector?: "barber" | "clinic" | "car_wash" | "generic";
   active: boolean;
   createdAt: string;
   whatsappNumbers: Array<{
@@ -319,4 +321,68 @@ export interface BarberDashboardSummary {
     upcomingScheduled: number;
   };
   nextAppointments: BarberAppointment[];
+}
+
+export type BillingDocumentStatus = "pending" | "paid" | "overdue";
+export type BillingDocumentType = "boleto" | "nfe";
+
+export interface BillingDocument {
+  id: string;
+  clientId: string;
+  type: BillingDocumentType;
+  description: string;
+  amount: number;
+  dueDate: string;
+  status: BillingDocumentStatus;
+  paidAt?: string;
+  barcode?: string;
+  nfeKey?: string;
+}
+
+export interface BillingClient {
+  id: string;
+  name: string;
+  document: string; // CPF/CNPJ
+  email: string;
+  phone: string;
+  autoSendEnabled?: boolean;
+  documents: BillingDocument[];
+}
+
+export interface OwnerDashboardAlert {
+  type: "error" | "warning" | "info";
+  message: string;
+  time: string;
+}
+
+export interface OwnerDashboardSummary {
+  generatedAt: string;
+  totals: {
+    pendingBillingAmount: number;
+    pendingBillingCount: number;
+    overdueBillingAmount: number;
+    overdueBillingCount: number;
+    appointmentsToday: number;
+    appointmentsMonth: number;
+    nfesImported: number;
+    messagesOut: number;
+    aiResponseRate: number;
+  };
+  messagesPerDay: Array<{ day: string; in: number; out: number }>;
+  appointmentsPerDay: Array<{ day: string; scheduled: number; completed: number; canceled: number }>;
+  billingByStatus: Array<{ status: string; count: number }>;
+  recentAlerts: OwnerDashboardAlert[];
+}
+
+export interface BillingDashboardSummary {
+  generatedAt: string;
+  totals: {
+    clients: number;
+    pendingAmount: number;
+    paidAmount: number;
+    overdueAmount: number;
+    pendingCount: number;
+    paidCount: number;
+    overdueCount: number;
+  };
 }

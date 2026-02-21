@@ -10,11 +10,11 @@ function Badge({ className, variant = "default", ...props }: BadgeProps) {
     default:
       "border-green-500/30 bg-green-500/15 text-green-400",
     secondary:
-      "border-white/10 bg-white/[0.06] text-white/70",
+      "border-border bg-muted/50 text-muted-foreground",
     destructive:
       "border-red-500/30 bg-red-500/15 text-red-400",
     outline:
-      "border-white/15 bg-transparent text-white/60",
+      "border-border bg-transparent text-muted-foreground",
   };
 
   return (

@@ -33,6 +33,8 @@ interface CompanyPanelProps {
   activeView: string;
 }
 
+const DAILY_SYNC_HOUR = 18;
+
 interface CertificateState {
   id: string | null;
   createdAt: string | null;
@@ -58,6 +60,43 @@ function formatDateTime(value: string | null): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
   return date.toLocaleString("pt-BR");
+}
+
+function formatWaitSeconds(seconds: number): string {
+  if (seconds <= 0) {
+    return "agora";
+  }
+
+  const totalMinutes = Math.ceil(seconds / 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours <= 0) {
+    return `${minutes} min`;
+  }
+
+  if (minutes === 0) {
+    return `${hours}h`;
+  }
+
+  return `${hours}h ${minutes}min`;
+}
+
+function getNextDailySyncAt(now: Date): Date {
+  const next = new Date(now);
+  next.setHours(DAILY_SYNC_HOUR, 0, 0, 0);
+
+  if (next.getTime() <= now.getTime()) {
+    next.setDate(next.getDate() + 1);
+  }
+
+  return next;
+}
+
+function getSecondsUntilNextDailySync(nowMs: number): number {
+  const now = new Date(nowMs);
+  const next = getNextDailySyncAt(now);
+  return Math.max(0, Math.ceil((next.getTime() - nowMs) / 1000));
 }
 
 function parseDateOnly(value: string | null): Date | null {
@@ -194,6 +233,7 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
   const [uploadingCertificate, setUploadingCertificate] = useState(false);
   const [removingCertificate, setRemovingCertificate] = useState(false);
   const [downloadingXml, setDownloadingXml] = useState(false);
+  const [monitoringTick, setMonitoringTick] = useState(() => Date.now());
   const [feedback, setFeedback] = useState("");
 
   const [nfeSearch, setNfeSearch] = useState("");
@@ -247,6 +287,18 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
     void loadMonitoring();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView]);
+
+  useEffect(() => {
+    if (activeView !== "monitoring" || !monitoring) {
+      return;
+    }
+
+    const timer = window.setInterval(() => setMonitoringTick(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [activeView, monitoring]);
+
+  const nextScheduledSyncAt = useMemo(() => getNextDailySyncAt(new Date(monitoringTick)), [monitoringTick]);
+  const secondsUntilScheduledSync = useMemo(() => getSecondsUntilNextDailySync(monitoringTick), [monitoringTick]);
 
   async function loadDashboard() {
     setLoading(true);
@@ -367,16 +419,43 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
         </div>
 
         {loadingMonitoring ? (
-          <div className="flex items-center gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.04] p-6">
+          <div className="flex items-center gap-3 rounded-2xl border border-border bg-muted/50 p-6">
             <RefreshCw className="h-5 w-5 animate-spin text-green-400" />
             <span className="text-sm font-semibold text-muted-foreground">Atualizando dados de monitoramento...</span>
           </div>
         ) : null}
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="rounded-xl border border-border bg-muted/50 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Agenda de sincronizacao</p>
+          <p className="mt-1 text-sm font-semibold">O sync de NF-e roda apenas as 18:00, todos os dias.</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Proxima execucao: {formatDateTime(nextScheduledSyncAt.toISOString())} | Faltam {formatWaitSeconds(secondsUntilScheduledSync)}
+          </p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
           <SummaryCard icon={ShieldCheck} label="Certificado" value={certificateBadge.label} detail={certificate.validTo ? `Valido ate ${formatDate(certificate.validTo)}` : "Sem validade informada"} />
           <SummaryCard icon={FileText} label="NF-e importadas" value={monitoring?.nfes.imported ?? 0} detail="Total de notas importadas no sistema" />
+          <SummaryCard icon={RefreshCw} label="Sync NF-e" value="18:00" detail={`Faltam ${formatWaitSeconds(secondsUntilScheduledSync)}`} />
         </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Saude da sincronizacao</CardTitle>
+            <CardDescription>O ciclo de sincronizacao roda diariamente as 18:00.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-2 text-sm md:grid-cols-2">
+            <InfoField label="Agenda" value="Diario as 18:00" />
+            <InfoField label="Tempo ate o proximo ciclo" value={formatWaitSeconds(secondsUntilScheduledSync)} />
+            <InfoField label="Proxima execucao" value={formatDateTime(nextScheduledSyncAt.toISOString())} />
+            <InfoField label="Ultimo sync" value={formatDateTime(monitoring?.sync.lastSyncAt ?? null)} />
+            <InfoField label="Status ultimo sync" value={monitoring?.sync.lastSyncStatus ?? "-"} />
+            <InfoField
+              label="Cooldown tecnico"
+              value={monitoring?.sync.waitSeconds !== null && monitoring?.sync.waitSeconds !== undefined ? formatWaitSeconds(monitoring.sync.waitSeconds) : "-"}
+            />
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
@@ -424,7 +503,7 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
                 {certificate.daysRemaining !== null ? <span className="text-xs text-muted-foreground">{certificate.daysRemaining} dia(s) restantes</span> : null}
               </div>
 
-              <div className="grid gap-3 rounded-xl border border-white/[0.06] bg-white/[0.04] p-3 text-sm md:grid-cols-2">
+              <div className="grid gap-3 rounded-xl border border-border bg-muted/50 p-3 text-sm md:grid-cols-2">
                 <InfoField label="Valido de" value={formatDate(certificate.validFrom)} />
                 <InfoField label="Valido ate" value={formatDate(certificate.validTo)} />
                 <InfoField label="Importado em" value={formatDateTime(certificate.createdAt)} />
@@ -437,7 +516,7 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
                   {removingCertificate ? "Excluindo..." : "Excluir certificado atual"}
                 </Button>
               ) : (
-                <div className="rounded-xl border border-dashed border-white/15 bg-white/[0.03] px-3 py-2 text-sm text-muted-foreground">
+                <div className="rounded-xl border border-dashed border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
                   Nenhum certificado ativo encontrado.
                 </div>
               )}
@@ -546,7 +625,7 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
                 <button
                   key={nfe.id}
                   onClick={() => void handleOpenNfe(nfe.id)}
-                  className="w-full rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-2 text-left transition hover:bg-white/[0.08]"
+                  className="w-full rounded-xl border border-border bg-muted/50 px-3 py-2 text-left transition hover:bg-muted/50"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -564,7 +643,7 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
 
               {/* Paginação */}
               {filteredNfes.length > NFE_PAGE_SIZE ? (
-                <div className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-2">
+                <div className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-3 py-2">
                   <p className="text-xs text-muted-foreground">
                     Página {nfePage} de {nfeTotalPages}
                   </p>
@@ -613,7 +692,7 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
                     </Button>
                   </div>
 
-                  <div className="grid gap-3 rounded-xl border border-white/[0.06] bg-white/[0.04] p-3 text-sm md:grid-cols-2">
+                  <div className="grid gap-3 rounded-xl border border-border bg-muted/50 p-3 text-sm md:grid-cols-2">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Chave</p>
                       <div className="mt-1 flex items-center gap-1.5">
@@ -621,7 +700,7 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
                         <button
                           type="button"
                           onClick={() => handleCopyKey(selectedNfe.chave)}
-                          className="shrink-0 rounded p-1 transition hover:bg-white/10"
+                          className="shrink-0 rounded p-1 transition hover:bg-accent"
                           title="Copiar chave"
                         >
                           <Copy className="h-3.5 w-3.5 text-muted-foreground" />
@@ -649,7 +728,7 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
                             <th className="px-3 py-2 text-right">Total</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-white/[0.06] bg-white/[0.03]">
+                        <tbody className="divide-y divide-border bg-muted/50">
                           {(selectedNfe.items || []).length === 0 ? (
                             <tr>
                               <td colSpan={4} className="px-3 py-4 text-center text-sm text-muted-foreground">Nenhum item nesta nota.</td>
@@ -682,9 +761,9 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl border border-white/[0.06] bg-white/[0.04] p-5">
+      <div className="rounded-2xl border border-border bg-muted/50 p-5">
         <p className="text-sm text-muted-foreground">Operacao da empresa</p>
-        <h2 className="font-display text-2xl font-bold text-white">{companyName}</h2>
+        <h2 className="font-display text-2xl font-bold text-foreground">{companyName}</h2>
       </div>
 
       {summary ? (
@@ -704,7 +783,7 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
         <CardContent className="space-y-2">
           {recentNfes.length === 0 ? <p className="text-sm text-muted-foreground">Nenhuma nota processada ainda.</p> : null}
           {recentNfes.map((nfe) => (
-            <div key={nfe.id} className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-2">
+            <div key={nfe.id} className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-3 py-2">
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold">{nfe.chave}</p>
                 <p className="text-xs text-muted-foreground">{nfe.emitenteNome || "Emitente nao identificado"}</p>

@@ -10,9 +10,12 @@ import {
   RefreshCw,
   Save,
   Scissors,
+  Stethoscope,
+  CarFront,
   Trash2,
   UserRound,
   Users,
+  UsersRound,
 } from "lucide-react";
 import { api } from "../api";
 import { BarberAppointment, BarberAppointmentStatus, BarberProfile, BarberService } from "../types";
@@ -237,6 +240,15 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState("");
   const [companyName, setCompanyName] = useState("Empresa");
+  const [bookingSector, setBookingSector] = useState<"barber" | "clinic" | "car_wash" | "generic">("barber");
+
+  const isPersonResource = bookingSector === "barber" || bookingSector === "clinic";
+  const labelResource = bookingSector === "car_wash" ? "Box/Vaga" : bookingSector === "clinic" ? "Profissional" : bookingSector === "generic" ? "Recurso" : "Barbeiro";
+  const labelResources = bookingSector === "car_wash" ? "Boxes/Vagas" : bookingSector === "clinic" ? "Profissionais" : bookingSector === "generic" ? "Recursos" : "Barbeiros";
+
+  let iconService = Scissors;
+  if (bookingSector === "car_wash") iconService = CarFront;
+  if (bookingSector === "clinic") iconService = Stethoscope;
 
   const [summary, setSummary] = useState<{
     barbers: number;
@@ -352,6 +364,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
       ]);
 
       setCompanyName(me.company?.name || "Empresa");
+      setBookingSector(me.company?.bookingSector || "barber");
       setSummary(dash.totals);
       setBarbers(barberList);
       setServices(serviceList);
@@ -661,14 +674,18 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
         <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
           <Card>
             <CardHeader>
-              <CardTitle>Novo barbeiro</CardTitle>
-              <CardDescription>Cadastre profissionais para montar a agenda.</CardDescription>
+              <CardTitle>Novo(a) {labelResource.toLowerCase()}</CardTitle>
+              <CardDescription>Cadastre {labelResources.toLowerCase()} para montar a agenda.</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={submitNewBarber} className="space-y-3">
-                <Input placeholder="Nome do barbeiro" value={newBarber.name} onChange={(e) => setNewBarber((prev) => ({ ...prev, name: e.target.value }))} required />
-                <Input placeholder="Email (opcional)" value={newBarber.email} onChange={(e) => setNewBarber((prev) => ({ ...prev, email: e.target.value }))} />
-                <Input placeholder="Telefone (opcional)" value={newBarber.phone} onChange={(e) => setNewBarber((prev) => ({ ...prev, phone: e.target.value }))} />
+                <Input placeholder={`Nome do(a) ${labelResource.toLowerCase()}`} value={newBarber.name} onChange={(e) => setNewBarber((prev) => ({ ...prev, name: e.target.value }))} required />
+                {isPersonResource && (
+                  <>
+                    <Input placeholder="Email (opcional)" value={newBarber.email} onChange={(e) => setNewBarber((prev) => ({ ...prev, email: e.target.value }))} />
+                    <Input placeholder="Telefone (opcional)" value={newBarber.phone} onChange={(e) => setNewBarber((prev) => ({ ...prev, phone: e.target.value }))} />
+                  </>
+                )}
                 <label className="flex items-center gap-2 text-sm text-muted-foreground">
                   <input
                     type="checkbox"
@@ -679,7 +696,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                 </label>
                 <Button type="submit" className="w-full">
                   <UserRound className="mr-1.5 h-4 w-4" />
-                  Cadastrar barbeiro
+                  Cadastrar {labelResource.toLowerCase()}
                 </Button>
               </form>
             </CardContent>
@@ -687,17 +704,17 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
 
           <Card>
             <CardHeader>
-              <CardTitle>Barbeiros cadastrados</CardTitle>
-              <CardDescription>Edite nome, contato e status de cada barbeiro.</CardDescription>
+              <CardTitle>{labelResources} cadastrados(as)</CardTitle>
+              <CardDescription>Edite nome, contato e status de cada {labelResource.toLowerCase()}.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {barbers.length === 0 ? <p className="text-sm text-muted-foreground">Nenhum barbeiro cadastrado.</p> : null}
+              {barbers.length === 0 ? <p className="text-sm text-muted-foreground">Nenhum(a) {labelResource.toLowerCase()} cadastrado(a).</p> : null}
               {barbers.map((barber) => {
                 const draft = barberDrafts[barber.id];
                 if (!draft) return null;
 
                 return (
-                  <div key={barber.id} className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-3">
+                  <div key={barber.id} className="rounded-xl border border-border bg-muted/50 p-3">
                     <div className="grid gap-2 md:grid-cols-3">
                       <Input
                         placeholder="Nome"
@@ -706,20 +723,24 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                           setBarberDrafts((prev) => ({ ...prev, [barber.id]: { ...draft, name: e.target.value } }))
                         }
                       />
-                      <Input
-                        placeholder="Email"
-                        value={draft.email}
-                        onChange={(e) =>
-                          setBarberDrafts((prev) => ({ ...prev, [barber.id]: { ...draft, email: e.target.value } }))
-                        }
-                      />
-                      <Input
-                        placeholder="Telefone"
-                        value={draft.phone}
-                        onChange={(e) =>
-                          setBarberDrafts((prev) => ({ ...prev, [barber.id]: { ...draft, phone: e.target.value } }))
-                        }
-                      />
+                      {isPersonResource && (
+                        <>
+                          <Input
+                            placeholder="Email"
+                            value={draft.email}
+                            onChange={(e) =>
+                              setBarberDrafts((prev) => ({ ...prev, [barber.id]: { ...draft, email: e.target.value } }))
+                            }
+                          />
+                          <Input
+                            placeholder="Telefone"
+                            value={draft.phone}
+                            onChange={(e) =>
+                              setBarberDrafts((prev) => ({ ...prev, [barber.id]: { ...draft, phone: e.target.value } }))
+                            }
+                          />
+                        </>
+                      )}
                     </div>
 
                     <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -754,15 +775,15 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
         <Card>
           <CardHeader>
             <CardTitle>Grade de horarios</CardTitle>
-            <CardDescription>Defina horario de atendimento do barbeiro selecionado.</CardDescription>
+            <CardDescription>Defina horario de atendimento do(a) {labelResource.toLowerCase()} selecionado(a).</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
-            {!selectedBarberId ? <p className="text-sm text-muted-foreground">Selecione um barbeiro para editar os horarios.</p> : null}
+            {!selectedBarberId ? <p className="text-sm text-muted-foreground">Selecione um(a) {labelResource.toLowerCase()} para editar os horarios.</p> : null}
             {selectedBarberId ? (
               <>
                 {hoursDraft.map((entry) => (
-                  <div key={entry.weekday} className="grid items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.04] p-2 md:grid-cols-[90px_1fr_1fr_auto]">
-                    <span className="text-sm font-semibold">{WEEKDAY_LABELS[entry.weekday]}</span>
+                  <div key={entry.weekday} className="grid items-center gap-2 rounded-xl border border-border bg-muted/50 p-2 grid-cols-2 lg:grid-cols-[90px_1fr_1fr_auto]">
+                    <span className="col-span-2 text-sm font-semibold lg:col-span-1">{WEEKDAY_LABELS[entry.weekday]}</span>
                     <Input
                       type="time"
                       value={entry.startTime}
@@ -783,7 +804,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                         )
                       }
                     />
-                    <label className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+                    <label className="col-span-2 flex items-center justify-end gap-2 text-xs text-muted-foreground lg:col-span-1">
                       <input
                         type="checkbox"
                         checked={entry.active}
@@ -818,7 +839,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
           <Card>
             <CardHeader>
               <CardTitle>Novo servico</CardTitle>
-              <CardDescription>Defina valor, duracao e barbeiro responsavel.</CardDescription>
+              <CardDescription>Defina valor, duracao e {labelResource.toLowerCase()} responsavel.</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={submitNewService} className="space-y-3">
@@ -835,11 +856,11 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                   <Input placeholder="Preco" value={newService.price} onChange={(e) => setNewService((prev) => ({ ...prev, price: e.target.value }))} required />
                 </div>
                 <select
-                  className="h-10 w-full rounded-xl border border-white/10 bg-dark-700/80 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                  className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
                   value={newService.barberId}
                   onChange={(e) => setNewService((prev) => ({ ...prev, barberId: e.target.value }))}
                 >
-                  <option value="">Todos os barbeiros</option>
+                  <option value="">Todos(as) os(as) {labelResources.toLowerCase()}</option>
                   {barbers.map((barber) => (
                     <option key={barber.id} value={barber.id}>
                       {barber.name}
@@ -866,7 +887,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                 if (!draft) return null;
 
                 return (
-                  <div key={service.id} className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-3">
+                  <div key={service.id} className="rounded-xl border border-border bg-muted/50 p-3">
                     <Input
                       value={draft.name}
                       onChange={(e) => setServiceDrafts((prev) => ({ ...prev, [service.id]: { ...draft, name: e.target.value } }))}
@@ -885,13 +906,13 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                         onChange={(e) => setServiceDrafts((prev) => ({ ...prev, [service.id]: { ...draft, price: e.target.value } }))}
                       />
                       <select
-                        className="h-10 rounded-xl border border-white/10 bg-dark-700/80 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                        className="h-10 rounded-xl border border-input bg-background/50 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
                         value={draft.barberId}
                         onChange={(e) =>
                           setServiceDrafts((prev) => ({ ...prev, [service.id]: { ...draft, barberId: e.target.value } }))
                         }
                       >
-                        <option value="">Todos os barbeiros</option>
+                        <option value="">Todos(as) os(as) {labelResources.toLowerCase()}</option>
                         {barbers.map((barber) => (
                           <option key={barber.id} value={barber.id}>
                             {barber.name}
@@ -934,269 +955,279 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
 
     return (
       <div className="space-y-6">
-        <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-          <Card>
-            <CardHeader>
-              <CardTitle>Novo agendamento</CardTitle>
-              <CardDescription>Cadastre atendimentos de forma simples.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={submitNewAppointment} className="space-y-3">
-                <Input placeholder="Nome do cliente" value={newAppointment.clientName} onChange={(e) => setNewAppointment((prev) => ({ ...prev, clientName: e.target.value }))} required />
-                <Input placeholder="Telefone do cliente" value={newAppointment.clientPhone} onChange={(e) => setNewAppointment((prev) => ({ ...prev, clientPhone: e.target.value }))} required />
+        <Card className="rounded-xl border border-border bg-card">
+          <CardHeader className="pb-4">
+            <CardTitle>Novo agendamento</CardTitle>
+            <CardDescription className="hidden sm:block">Cadastre atendimentos de forma rapida.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={submitNewAppointment} className="grid items-end gap-3 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6">
+              <div className="space-y-1.5 lg:col-span-1">
+                <Input placeholder="Nome" value={newAppointment.clientName} onChange={(e) => setNewAppointment((prev) => ({ ...prev, clientName: e.target.value }))} required />
+              </div>
+              <div className="space-y-1.5 lg:col-span-1">
+                <Input placeholder="Telefone" value={newAppointment.clientPhone} onChange={(e) => setNewAppointment((prev) => ({ ...prev, clientPhone: e.target.value }))} required />
+              </div>
+              <div className="space-y-1.5 lg:col-span-1">
                 <select
-                  className="h-10 w-full rounded-xl border border-white/10 bg-dark-700/80 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                  className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
                   value={newAppointment.serviceId}
                   onChange={(e) => setNewAppointment((prev) => ({ ...prev, serviceId: e.target.value }))}
                   required
                 >
-                  <option value="">Selecione o servico</option>
+                  <option value="">Servico</option>
                   {services.filter((service) => service.active).map((service) => (
                     <option key={service.id} value={service.id}>
-                      {service.name} ({service.durationMinutes}min)
+                      {service.name}
                     </option>
                   ))}
                 </select>
+              </div>
+              <div className="space-y-1.5 lg:col-span-1">
                 <select
-                  className="h-10 w-full rounded-xl border border-white/10 bg-dark-700/80 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                  className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
                   value={newAppointment.barberId}
                   onChange={(e) => setNewAppointment((prev) => ({ ...prev, barberId: e.target.value }))}
                   required
                 >
-                  <option value="">Selecione o barbeiro</option>
+                  <option value="">{labelResource}</option>
                   {barbers.filter((barber) => barber.active).map((barber) => (
                     <option key={barber.id} value={barber.id}>
                       {barber.name}
                     </option>
                   ))}
                 </select>
+              </div>
+              <div className="space-y-1.5 lg:col-span-1">
                 <Input
                   type="datetime-local"
                   value={newAppointment.startsAt}
                   onChange={(e) => setNewAppointment((prev) => ({ ...prev, startsAt: e.target.value }))}
                   required
                 />
+              </div>
+              <div className="lg:col-span-1">
                 <Button type="submit" className="w-full">
-                  <CalendarDays className="mr-1.5 h-4 w-4" />
-                  Salvar agendamento
+                  <CalendarDays className="mr-1.5 h-4 w-4 hidden lg:inline-block" />
+                  Salvar
                 </Button>
-              </form>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="space-y-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <CardTitle>Agenda do dia</CardTitle>
-                  <CardDescription>Visao ampla dos agendamentos com detalhes por clique.</CardDescription>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button type="button" size="icon" variant="outline" onClick={() => setSelectedDate((prev) => shiftInputDate(prev, -1))}>
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <Input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} className="w-[170px]" />
-                  <Button type="button" size="icon" variant="outline" onClick={() => setSelectedDate((prev) => shiftInputDate(prev, 1))}>
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                  <Button type="button" size="icon" variant="ghost" onClick={() => void loadAppointmentsForDate(selectedDate)}>
-                    <RefreshCw className={`h-4 w-4 ${loadingDayAppointments ? "animate-spin" : ""}`} />
-                  </Button>
-                </div>
               </div>
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-2 text-sm text-muted-foreground">
-                <span className="font-semibold capitalize text-foreground">{formatInputDateLabel(selectedDate)}</span>
-                {" | "}
-                {dayAppointments.length} agendamento(s) no dia
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-xl border border-border bg-card">
+          <CardHeader className="space-y-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <CardTitle>Agenda do dia</CardTitle>
+                <CardDescription>Visao ampla dos agendamentos com detalhes por clique.</CardDescription>
               </div>
-
-              {/* Tabs de status */}
-              <div className="flex flex-wrap gap-1.5">
-                {(["all", "scheduled", "completed", "canceled"] as const).map((status) => {
-                  const labels: Record<typeof status, string> = {
-                    all: "Todos",
-                    scheduled: "Agendados",
-                    completed: "Concluídos",
-                    canceled: "Cancelados",
-                  };
-                  const count = status === "all"
-                    ? dayAppointments.length
-                    : dayStatusCounts[status];
-                  return (
-                    <button
-                      key={status}
-                      type="button"
-                      onClick={() => setDayStatusFilter(status)}
-                      className={cn(
-                        "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition",
-                        dayStatusFilter === status
-                          ? "bg-green-500/15 text-green-400"
-                          : "bg-white/[0.04] text-muted-foreground hover:bg-white/[0.08]",
-                      )}
-                    >
-                      {labels[status]}
-                      <span className={cn(
-                        "rounded-md px-1.5 py-0.5 text-[10px] font-bold",
-                        dayStatusFilter === status ? "bg-green-500/20 text-green-400" : "bg-white/[0.06] text-muted-foreground",
-                      )}>
-                        {count}
-                      </span>
-                    </button>
-                  );
-                })}
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" size="icon" variant="outline" onClick={() => setSelectedDate((prev) => shiftInputDate(prev, -1))}>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} className="w-[170px]" />
+                <Button type="button" size="icon" variant="outline" onClick={() => setSelectedDate((prev) => shiftInputDate(prev, 1))}>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <Button type="button" size="icon" variant="ghost" onClick={() => void loadAppointmentsForDate(selectedDate)}>
+                  <RefreshCw className={`h-4 w-4 ${loadingDayAppointments ? "animate-spin" : ""}`} />
+                </Button>
               </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-                <div className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-3">
-                  <div className="relative min-h-[620px] overflow-x-auto">
-                    <div className="relative min-w-[560px]" style={{ height: `${DAY_TIMELINE_HEIGHT}px` }}>
-                      {timelineHours.map((hour, index) => (
-                        <div key={hour} className="absolute left-0 right-0 border-t border-white/[0.06]" style={{ top: `${index * HOUR_ROW_HEIGHT}px` }}>
-                          <span className="absolute left-1 top-0 -translate-y-1/2 rounded bg-background px-1 text-[11px] font-semibold text-muted-foreground">
-                            {`${String(hour).padStart(2, "0")}:00`}
-                          </span>
-                        </div>
-                      ))}
+            </div>
+            <div className="rounded-xl border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+              <span className="font-semibold capitalize text-foreground">{formatInputDateLabel(selectedDate)}</span>
+              {" | "}
+              {dayAppointments.length} agendamento(s) no dia
+            </div>
 
-                      {dayAppointmentsLayout.map((item) => {
-                        const isSelected = item.appointment.id === selectedAppointmentId;
-                        const toneClass =
-                          item.appointment.status === "completed"
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                            : item.appointment.status === "canceled"
-                              ? "border-rose-200 bg-rose-50 text-rose-900"
-                              : "border-primary/35 bg-primary/10 text-primary";
+            {/* Tabs de status */}
+            <div className="flex flex-wrap gap-1.5">
+              {(["all", "scheduled", "completed", "canceled"] as const).map((status) => {
+                const labels: Record<typeof status, string> = {
+                  all: "Todos",
+                  scheduled: "Agendados",
+                  completed: "Concluídos",
+                  canceled: "Cancelados",
+                };
+                const count = status === "all"
+                  ? dayAppointments.length
+                  : dayStatusCounts[status];
+                return (
+                  <button
+                    key={status}
+                    type="button"
+                    onClick={() => setDayStatusFilter(status)}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition",
+                      dayStatusFilter === status
+                        ? "bg-green-500/15 text-green-400"
+                        : "bg-muted/50 text-muted-foreground hover:bg-muted/50",
+                    )}
+                  >
+                    {labels[status]}
+                    <span className={cn(
+                      "rounded-md px-1.5 py-0.5 text-[10px] font-bold",
+                      dayStatusFilter === status ? "bg-green-500/20 text-green-400" : "bg-muted/50 text-muted-foreground",
+                    )}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="rounded-xl border border-border bg-muted/50 p-3">
+                <div className="relative min-h-[620px] overflow-x-auto">
+                  <div className="relative min-w-[340px] sm:min-w-[480px] md:min-w-full" style={{ height: `${DAY_TIMELINE_HEIGHT}px` }}>
+                    {timelineHours.map((hour, index) => (
+                      <div key={hour} className="absolute left-0 right-0 border-t border-border" style={{ top: `${index * HOUR_ROW_HEIGHT}px` }}>
+                        <span className="absolute left-1 top-0 -translate-y-1/2 rounded bg-background px-1 text-[11px] font-semibold text-muted-foreground">
+                          {`${String(hour).padStart(2, "0")}:00`}
+                        </span>
+                      </div>
+                    ))}
 
-                        return (
-                          <button
-                            key={item.appointment.id}
-                            type="button"
-                            onClick={() => setSelectedAppointmentId(item.appointment.id)}
-                            className={`absolute left-[72px] right-2 rounded-xl border px-3 py-2 text-left transition ${toneClass} ${isSelected ? "ring-2 ring-primary/45 shadow-sm" : "hover:shadow-sm"
-                              }`}
-                            style={{ top: `${item.top}px`, height: `${item.height}px` }}
-                          >
-                            <p className="text-sm font-semibold leading-snug">{item.appointment.clientName}</p>
-                            <p className="text-xs font-semibold">{formatTimeRange(item.appointment)}</p>
-                            <p className="mt-1 text-xs opacity-90">
-                              {item.appointment.service?.name || "-"} | {item.appointment.barber?.name || "-"}
-                            </p>
-                          </button>
-                        );
-                      })}
+                    {dayAppointmentsLayout.map((item) => {
+                      const isSelected = item.appointment.id === selectedAppointmentId;
+                      const toneClass =
+                        item.appointment.status === "completed"
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                          : item.appointment.status === "canceled"
+                            ? "border-rose-200 bg-rose-50 text-rose-900"
+                            : "border-primary/35 bg-primary/10 text-primary";
 
-                      {!loadingDayAppointments && dayAppointmentsLayout.length === 0 ? (
-                        <div className="absolute inset-0 grid place-items-center pl-16 pr-3">
-                          <p className="rounded-xl border border-dashed border-white/[0.06] bg-white/[0.04] px-4 py-3 text-sm text-muted-foreground">
-                            Nenhum agendamento para este dia.
+                      return (
+                        <button
+                          key={item.appointment.id}
+                          type="button"
+                          onClick={() => setSelectedAppointmentId(item.appointment.id)}
+                          className={`absolute left-[72px] right-2 rounded-xl border px-3 py-2 text-left transition ${toneClass} ${isSelected ? "ring-2 ring-primary/45 shadow-sm" : "hover:shadow-sm"
+                            }`}
+                          style={{ top: `${item.top}px`, height: `${item.height}px` }}
+                        >
+                          <p className="text-sm font-semibold leading-snug">{item.appointment.clientName}</p>
+                          <p className="text-xs font-semibold">{formatTimeRange(item.appointment)}</p>
+                          <p className="mt-1 text-xs opacity-90">
+                            {item.appointment.service?.name || "-"} | {item.appointment.barber?.name || "-"}
                           </p>
-                        </div>
-                      ) : null}
+                        </button>
+                      );
+                    })}
 
-                      {loadingDayAppointments ? (
-                        <div className="absolute inset-0 grid place-items-center bg-dark-800/80">
-                          <div className="flex items-center gap-2 rounded-xl border border-white/[0.06] bg-dark-700/80 px-3 py-2 text-sm text-muted-foreground">
-                            <RefreshCw className="h-4 w-4 animate-spin" />
-                            Atualizando agenda...
-                          </div>
+                    {!loadingDayAppointments && dayAppointmentsLayout.length === 0 ? (
+                      <div className="absolute inset-0 grid place-items-center pl-16 pr-3">
+                        <p className="rounded-xl border border-dashed border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
+                          Nenhum agendamento para este dia.
+                        </p>
+                      </div>
+                    ) : null}
+
+                    {loadingDayAppointments ? (
+                      <div className="absolute inset-0 grid place-items-center bg-card/80">
+                        <div className="flex items-center gap-2 rounded-xl border border-border bg-background/50 px-3 py-2 text-sm text-muted-foreground">
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                          Atualizando agenda...
                         </div>
-                      ) : null}
-                    </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
+              </div>
 
-                <div className="space-y-3">
-                  {selectedDayAppointment ? (
-                    <div className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-4">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Detalhes</p>
-                          <h4 className="text-base font-bold">{selectedDayAppointment.clientName}</h4>
-                        </div>
-                        <Badge variant={statusVariant(selectedDayAppointment.status)}>
-                          {formatAppointmentStatus(selectedDayAppointment.status)}
-                        </Badge>
+              <div className="space-y-3">
+                {selectedDayAppointment ? (
+                  <div className="rounded-xl border border-border bg-muted/50 p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Detalhes</p>
+                        <h4 className="text-base font-bold">{selectedDayAppointment.clientName}</h4>
                       </div>
+                      <Badge variant={statusVariant(selectedDayAppointment.status)}>
+                        {formatAppointmentStatus(selectedDayAppointment.status)}
+                      </Badge>
+                    </div>
 
-                      <div className="mt-3 space-y-2 text-sm">
-                        <p className="flex items-center gap-2 text-muted-foreground">
-                          <CalendarClock className="h-4 w-4" />
-                          <span className="font-semibold text-foreground">{formatTimeRange(selectedDayAppointment)}</span>
-                        </p>
-                        <p>
-                          <span className="text-muted-foreground">Telefone:</span> {selectedDayAppointment.clientPhone}
-                        </p>
-                        <p>
-                          <span className="text-muted-foreground">Servico:</span> {selectedDayAppointment.service?.name || "-"}
-                        </p>
-                        <p>
-                          <span className="text-muted-foreground">Barbeiro:</span> {selectedDayAppointment.barber?.name || "-"}
-                        </p>
-                        <p>
-                          <span className="text-muted-foreground">Criado em:</span> {formatDateTime(selectedDayAppointment.createdAt)}
-                        </p>
-                        {selectedDayAppointment.notes ? (
-                          <div className="rounded-lg border border-white/[0.06] bg-background/70 px-3 py-2 text-xs text-muted-foreground">
-                            {selectedDayAppointment.notes}
-                          </div>
-                        ) : null}
-                      </div>
-
-                      {selectedDayAppointment.status === "scheduled" ? (
-                        <div className="mt-4 grid gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => void setAppointmentStatus(selectedDayAppointment.id, "completed")}
-                          >
-                            <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
-                            Marcar como concluido
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => void setAppointmentStatus(selectedDayAppointment.id, "canceled")}
-                          >
-                            Cancelar agendamento
-                          </Button>
+                    <div className="mt-3 space-y-2 text-sm">
+                      <p className="flex items-center gap-2 text-muted-foreground">
+                        <CalendarClock className="h-4 w-4" />
+                        <span className="font-semibold text-foreground">{formatTimeRange(selectedDayAppointment)}</span>
+                      </p>
+                      <p>
+                        <span className="text-muted-foreground">Telefone:</span> {selectedDayAppointment.clientPhone}
+                      </p>
+                      <p>
+                        <span className="text-muted-foreground">Servico:</span> {selectedDayAppointment.service?.name || "-"}
+                      </p>
+                      <p>
+                        <span className="text-muted-foreground">{labelResource}:</span> {selectedDayAppointment.barber?.name || "-"}
+                      </p>
+                      <p>
+                        <span className="text-muted-foreground">Criado em:</span> {formatDateTime(selectedDayAppointment.createdAt)}
+                      </p>
+                      {selectedDayAppointment.notes ? (
+                        <div className="rounded-lg border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+                          {selectedDayAppointment.notes}
                         </div>
                       ) : null}
                     </div>
-                  ) : (
-                    <div className="rounded-xl border border-dashed border-white/[0.06] bg-white/[0.04] px-4 py-8 text-center text-sm text-muted-foreground">
-                      Clique em um agendamento para ver os detalhes.
-                    </div>
-                  )}
 
-                  {dayAppointments.length > 0 ? (
-                    <div className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-3">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Lista rapida</p>
-                      <div className="mt-2 space-y-2">
-                        {dayAppointments.map((appointment) => (
-                          <button
-                            key={appointment.id}
-                            type="button"
-                            onClick={() => setSelectedAppointmentId(appointment.id)}
-                            className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition ${appointment.id === selectedAppointmentId
-                              ? "border-primary/40 bg-primary/10"
-                              : "border-white/[0.06] bg-background hover:border-primary/25"
-                              }`}
-                          >
-                            <p className="font-semibold">{formatTime(appointment.startsAt)} - {appointment.clientName}</p>
-                            <p className="text-xs text-muted-foreground">{appointment.service?.name || "-"}</p>
-                          </button>
-                        ))}
+                    {selectedDayAppointment.status === "scheduled" ? (
+                      <div className="mt-4 grid gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void setAppointmentStatus(selectedDayAppointment.id, "completed")}
+                        >
+                          <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+                          Marcar como concluido
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => void setAppointmentStatus(selectedDayAppointment.id, "canceled")}
+                        >
+                          Cancelar agendamento
+                        </Button>
                       </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-border bg-muted/50 px-4 py-8 text-center text-sm text-muted-foreground">
+                    Clique em um agendamento para ver os detalhes.
+                  </div>
+                )}
+
+                {dayAppointments.length > 0 ? (
+                  <div className="rounded-xl border border-border bg-muted/50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Lista rapida</p>
+                    <div className="mt-2 space-y-2">
+                      {dayAppointments.map((appointment) => (
+                        <button
+                          key={appointment.id}
+                          type="button"
+                          onClick={() => setSelectedAppointmentId(appointment.id)}
+                          className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition ${appointment.id === selectedAppointmentId
+                            ? "border-primary/40 bg-primary/10"
+                            : "border-border bg-background hover:border-primary/25"
+                            }`}
+                        >
+                          <p className="font-semibold">{formatTime(appointment.startsAt)} - {appointment.clientName}</p>
+                          <p className="text-xs text-muted-foreground">{appointment.service?.name || "-"}</p>
+                        </button>
+                      ))}
                     </div>
-                  ) : null}
-                </div>
+                  </div>
+                ) : null}
               </div>
-            </CardContent>
-          </Card>
-        </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {feedback ? <FeedbackBox message={feedback} /> : null}
       </div>
@@ -1215,7 +1246,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-3">
+              <div className="rounded-xl border border-border bg-muted/50 p-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status da sessao</p>
                 <div className="mt-2 flex items-center gap-2">
                   <Badge variant={statusTone.badge}>{statusTone.text}</Badge>
@@ -1261,15 +1292,15 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
           <Card>
             <CardHeader>
               <CardTitle>QR code</CardTitle>
-              <CardDescription>Escaneie com o WhatsApp Business da barbearia.</CardDescription>
+              <CardDescription>Escaneie com o WhatsApp Business do estabelecimento.</CardDescription>
             </CardHeader>
             <CardContent>
               {qrCode ? (
-                <div className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-3">
-                  <img src={qrCode} alt="QR code WhatsApp" className="mx-auto w-full max-w-[320px] rounded-md border border-white/[0.06] bg-white p-2" />
+                <div className="rounded-xl border border-border bg-muted/50 p-3">
+                  <img src={qrCode} alt="QR code WhatsApp" className="mx-auto w-full max-w-[320px] rounded-md border border-border bg-white p-2" />
                 </div>
               ) : (
-                <div className="rounded-xl border border-dashed border-white/[0.06] bg-white/[0.03] px-3 py-8 text-center text-sm text-muted-foreground">
+                <div className="rounded-xl border border-dashed border-border bg-muted/50 px-3 py-8 text-center text-sm text-muted-foreground">
                   QR code indisponivel no momento.
                 </div>
               )}
@@ -1295,15 +1326,15 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl border border-white/[0.06] bg-white/[0.04] p-5">
+      <div className="rounded-2xl border border-border bg-muted/50 p-5">
         <p className="text-sm text-muted-foreground">Operacao da empresa</p>
         <h2 className="font-display text-2xl font-bold">{companyName}</h2>
       </div>
 
       {summary ? (
         <div className="grid auto-rows-fr gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard icon={Users} label="Barbeiros" value={summary.barbers} />
-          <StatCard icon={Scissors} label="Servicos" value={summary.services} />
+          <StatCard icon={UsersRound} label={labelResources} value={summary.barbers} />
+          <StatCard icon={iconService} label="Servicos" value={summary.services} />
           <StatCard icon={CalendarDays} label="Hoje" value={summary.appointmentsToday} />
           <StatCard icon={Clock3} label="Futuros" value={summary.upcomingScheduled} />
         </div>
@@ -1317,7 +1348,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
         <CardContent className="space-y-2">
           {nextAppointments.length === 0 ? <p className="text-sm text-muted-foreground">Nenhum agendamento encontrado.</p> : null}
           {nextAppointments.map((appointment) => (
-            <div key={appointment.id} className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-2">
+            <div key={appointment.id} className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-3 py-2">
               <div>
                 <p className="text-sm font-semibold">{appointment.clientName}</p>
                 <p className="text-xs text-muted-foreground">{appointment.service?.name || "-"}</p>
@@ -1346,14 +1377,14 @@ function StatCard({
   const valueIsNumeric = typeof value === "number";
 
   return (
-    <Card className="h-full min-h-[108px] border-white/5 bg-gradient-to-b from-white/[0.08] to-transparent transition-all hover:border-primary/25 hover:bg-white/[0.03]">
+    <Card className="h-full min-h-[108px] border-border bg-gradient-to-b from-white/[0.08] to-transparent transition-all hover:border-primary/25 hover:bg-muted/50">
       <CardContent className="grid h-full grid-cols-[auto_minmax(0,1fr)] items-center gap-4 p-4 sm:p-5">
         <div className="grid h-11 w-11 place-items-center rounded-xl bg-primary/12 text-primary ring-1 ring-inset ring-primary/20">
           <Icon className="h-5 w-5" />
         </div>
         <div className="min-w-0">
           <p className="truncate text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground/80">{label}</p>
-          <p className={cn("mt-1 truncate font-display font-bold leading-none text-white", valueIsNumeric ? "text-3xl" : "text-2xl")}>{value}</p>
+          <p className={cn("mt-1 truncate font-display font-bold leading-none text-foreground", valueIsNumeric ? "text-3xl" : "text-2xl")}>{value}</p>
         </div>
       </CardContent>
     </Card>

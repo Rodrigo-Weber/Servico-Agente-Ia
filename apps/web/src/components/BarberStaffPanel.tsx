@@ -86,7 +86,7 @@ export function BarberStaffPanel({ token, activeView }: BarberStaffPanelProps) {
 
   if (loading) {
     return (
-      <div className="flex items-center gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.04] p-8">
+      <div className="flex items-center gap-3 rounded-2xl border border-border bg-muted/50 p-8">
         <RefreshCw className="h-5 w-5 animate-spin text-green-400" />
         <span className="text-sm font-semibold text-muted-foreground">Carregando painel do barbeiro...</span>
       </div>
@@ -104,7 +104,7 @@ export function BarberStaffPanel({ token, activeView }: BarberStaffPanelProps) {
           <CardContent className="space-y-2">
             {services.length === 0 ? <p className="text-sm text-muted-foreground">Nenhum servico ativo encontrado.</p> : null}
             {services.map((service) => (
-              <div key={service.id} className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-2">
+              <div key={service.id} className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-3 py-2">
                 <div>
                   <p className="text-sm font-semibold">{service.name}</p>
                   <p className="text-xs text-muted-foreground">{service.durationMinutes} min</p>
@@ -130,7 +130,7 @@ export function BarberStaffPanel({ token, activeView }: BarberStaffPanelProps) {
           <CardContent className="space-y-2">
             {appointments.length === 0 ? <p className="text-sm text-muted-foreground">Sem agendamentos para este perfil.</p> : null}
             {appointments.map((appointment) => (
-              <div key={appointment.id} className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-3">
+              <div key={appointment.id} className="rounded-xl border border-border bg-muted/50 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <p className="text-sm font-semibold">{appointment.clientName}</p>
@@ -161,9 +161,9 @@ export function BarberStaffPanel({ token, activeView }: BarberStaffPanelProps) {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl border border-white/[0.06] bg-white/[0.04] p-5">
+      <div className="rounded-2xl border border-border bg-muted/50 p-5">
         <p className="text-sm text-muted-foreground">Perfil do profissional</p>
-        <h2 className="font-display text-2xl font-bold text-white">{barberName}</h2>
+        <h2 className="font-display text-2xl font-bold text-foreground">{barberName}</h2>
       </div>
 
       {summary ? (
@@ -182,7 +182,7 @@ export function BarberStaffPanel({ token, activeView }: BarberStaffPanelProps) {
         <CardContent className="space-y-2">
           {nextAppointments.length === 0 ? <p className="text-sm text-muted-foreground">Nenhum agendamento encontrado.</p> : null}
           {nextAppointments.map((appointment) => (
-            <div key={appointment.id} className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-2">
+            <div key={appointment.id} className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-3 py-2">
               <div>
                 <p className="text-sm font-semibold">{appointment.clientName}</p>
                 <p className="text-xs text-muted-foreground">{appointment.service?.name || "-"}</p>
@@ -209,14 +209,14 @@ function StatCard({
   value: string | number;
 }) {
   return (
-    <Card className="h-full min-h-[108px] border-white/5 bg-gradient-to-b from-white/[0.08] to-transparent transition-all hover:border-green-500/20 hover:bg-white/[0.03]">
+    <Card className="h-full min-h-[108px] border-border bg-gradient-to-b from-white/[0.08] to-transparent transition-all hover:border-green-500/20 hover:bg-muted/50">
       <CardContent className="grid h-full grid-cols-[auto_minmax(0,1fr)] items-center gap-4 p-4 sm:p-5">
         <div className="grid h-11 w-11 place-items-center rounded-xl bg-green-500/15 text-green-400 ring-1 ring-inset ring-green-500/20">
           <Icon className="h-5 w-5" />
         </div>
         <div className="min-w-0">
           <p className="truncate text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground/80">{label}</p>
-          <p className="mt-1 truncate font-display text-3xl font-bold leading-none text-white">{value}</p>
+          <p className="mt-1 truncate font-display text-3xl font-bold leading-none text-foreground">{value}</p>
         </div>
       </CardContent>
     </Card>

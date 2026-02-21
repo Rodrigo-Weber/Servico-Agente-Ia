@@ -3,14 +3,19 @@ import { isSyncBlocked } from "../../lib/sync-policy.js";
 import { buildCooldownStatus, parseCooldownUntil } from "../../lib/sync-status.js";
 import { dfeSyncService, SefazDfeError } from "../../services/dfe-sync.service.js";
 import { importNfeXml } from "../../services/nfe-import.service.js";
-import { aiService } from "../../services/ai.service.js";
 import { appConfigService } from "../../services/app-config.service.js";
 import { outboundDispatchService } from "../messages/outbound-dispatch.service.js";
 
 const MAX_SYNC_STATUS_LENGTH = 180;
 const BASE_656_COOLDOWN_MS = 61 * 60 * 1000;
 const MAX_656_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-const GLOBAL_SYNC_LOCK_NAME = "hourly_nfe_sync_global_lock";
+const DAILY_DIGEST_TIMEZONE = "America/Sao_Paulo";
+const OUTBOUND_TEXT_MAX_CHARS = 2800;
+
+interface DigestCompany {
+  id: string;
+  whatsappNumbers: Array<{ phoneE164: string }>;
+}
 
 function normalizeSyncStatus(value: string): string {
   const compact = value.replace(/\s+/g, " ").trim();
@@ -34,35 +39,152 @@ function resolveSefaz656CooldownUntil(now: Date, previousStatus: string | null |
   return extended.getTime() > maxUntil.getTime() ? maxUntil : extended;
 }
 
-async function tryAcquireGlobalSyncLock(): Promise<boolean> {
-  try {
-    const rows = await prisma.$queryRaw<Array<{ locked: number | bigint | null }>>`
-      SELECT GET_LOCK(${GLOBAL_SYNC_LOCK_NAME}, 0) AS locked
-    `;
-    return Number(rows[0]?.locked ?? 0) === 1;
-  } catch {
-    // Se o provider nao suportar GET_LOCK por algum motivo, segue sem lock.
-    return true;
-  }
+function formatCurrencyBr(value: number): string {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 }
 
-async function releaseGlobalSyncLock(): Promise<void> {
-  try {
-    await prisma.$queryRaw`
-      SELECT RELEASE_LOCK(${GLOBAL_SYNC_LOCK_NAME}) AS released
-    `;
-  } catch {
-    // Nao interrompe o fluxo por falha de release.
+function getTimezoneDayBounds(referenceDate: Date, timeZone: string): { startUtc: Date; endUtc: Date; dayLabel: string } {
+  const referenceInTimezone = new Date(referenceDate.toLocaleString("en-US", { timeZone }));
+  const dayStartInTimezone = new Date(referenceInTimezone);
+  dayStartInTimezone.setHours(0, 0, 0, 0);
+  const dayEndInTimezone = new Date(referenceInTimezone);
+  dayEndInTimezone.setHours(23, 59, 59, 999);
+
+  const driftMs = referenceDate.getTime() - referenceInTimezone.getTime();
+  const startUtc = new Date(dayStartInTimezone.getTime() + driftMs);
+  const endUtc = new Date(dayEndInTimezone.getTime() + driftMs);
+  const dayLabel = new Intl.DateTimeFormat("pt-BR", { timeZone }).format(referenceDate);
+
+  return { startUtc, endUtc, dayLabel };
+}
+
+function splitTextByLines(text: string, maxChars = OUTBOUND_TEXT_MAX_CHARS): string[] {
+  if (text.length <= maxChars) {
+    return [text];
+  }
+
+  const lines = text.split("\n");
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const line of lines) {
+    const candidate = current ? `${current}\n${line}` : line;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+      continue;
+    }
+
+    if (current) {
+      chunks.push(current);
+    }
+
+    if (line.length <= maxChars) {
+      current = line;
+      continue;
+    }
+
+    let rest = line;
+    while (rest.length > maxChars) {
+      chunks.push(rest.slice(0, maxChars));
+      rest = rest.slice(maxChars);
+    }
+    current = rest;
+  }
+
+  if (current) {
+    chunks.push(current);
+  }
+
+  if (chunks.length <= 1) {
+    return chunks;
+  }
+
+  return chunks.map((chunk, index) => `Resumo NF-e (${index + 1}/${chunks.length})\n${chunk}`);
+}
+
+async function sendDailyImportSummary(
+  company: DigestCompany,
+  referenceDate: Date,
+  options: { cooldownUntil?: Date | null } = {},
+): Promise<void> {
+  const { startUtc, endUtc, dayLabel } = getTimezoneDayBounds(referenceDate, DAILY_DIGEST_TIMEZONE);
+  const importedNotes = await prisma.nfeDocument.findMany({
+    where: {
+      companyId: company.id,
+      status: {
+        in: ["imported", "detected"],
+      },
+      createdAt: {
+        gte: startUtc,
+        lte: endUtc,
+      },
+    },
+    orderBy: [{ createdAt: "asc" }, { chave: "asc" }],
+    select: {
+      chave: true,
+      emitenteNome: true,
+      valorTotal: true,
+    },
+  });
+
+  const lines: string[] = [];
+  lines.push(`Resumo NF-e do dia ${dayLabel} (18:00).`);
+
+  if (options.cooldownUntil) {
+    lines.push(
+      `Observacao: a consulta SEFAZ entrou em cooldown temporario (cStat 656) ate ${options.cooldownUntil.toLocaleString("pt-BR", {
+        timeZone: DAILY_DIGEST_TIMEZONE,
+      })}.`,
+    );
+  }
+
+  if (importedNotes.length === 0) {
+    lines.push("Nenhuma NF-e foi detectada ou importada hoje.");
+    lines.push('Se quiser, responda "ver notas" para consultar o historico.');
+  } else {
+    const totalImportedValue = importedNotes.reduce((acc, note) => acc + Number(note.valorTotal), 0);
+    lines.push(`NF-e importadas automaticamente hoje: ${importedNotes.length}.`);
+    lines.push(`Valor total das notas: ${formatCurrencyBr(totalImportedValue)}.`);
+    lines.push("");
+
+    for (let index = 0; index < importedNotes.length; index += 1) {
+      const note = importedNotes[index];
+      const emitente = note.emitenteNome ? ` | ${note.emitenteNome}` : "";
+      lines.push(`${index + 1}. ${note.chave} | ${formatCurrencyBr(Number(note.valorTotal))}${emitente}`);
+    }
+
+    lines.push("");
+    lines.push('Se quiser consultar os detalhes ou baixar o DANFE, responda: "ver notas".');
+  }
+
+  const messages = splitTextByLines(lines.join("\n"));
+
+  for (const number of company.whatsappNumbers) {
+    for (const text of messages) {
+      const outLog = await prisma.messageLog.create({
+        data: {
+          companyId: company.id,
+          phoneE164: number.phoneE164,
+          direction: "out",
+          messageType: "text",
+          content: text,
+          intent: "ver",
+          status: "received",
+        },
+      });
+
+      await outboundDispatchService.enqueueOutboundText({
+        companyId: company.id,
+        phone: number.phoneE164,
+        text,
+        intent: "ver",
+        messageLogId: outLog.id,
+      });
+    }
   }
 }
 
 export async function runHourlyNfeSync(): Promise<void> {
-  const lockAcquired = await tryAcquireGlobalSyncLock();
-  if (!lockAcquired) {
-    return;
-  }
-
-  try {
   const settings = await appConfigService.getSettings();
   const companies = await prisma.company.findMany({
     where: {
@@ -84,14 +206,14 @@ export async function runHourlyNfeSync(): Promise<void> {
   });
 
   for (const company of companies) {
-    if (
-      isSyncBlocked({
-        minIntervalSeconds: settings.syncMinIntervalSeconds,
-        lastSuccessAt: company.dfeSyncState?.ultimoSucessoAt,
-        lastSyncAt: company.dfeSyncState?.ultimoSyncAt,
-        status: company.dfeSyncState?.ultimoStatus,
-      })
-    ) {
+    const syncBlocked = isSyncBlocked({
+      minIntervalSeconds: settings.syncMinIntervalSeconds,
+      lastSuccessAt: company.dfeSyncState?.ultimoSucessoAt,
+      lastSyncAt: company.dfeSyncState?.ultimoSyncAt,
+      status: company.dfeSyncState?.ultimoStatus,
+    });
+
+    if (syncBlocked) {
       continue;
     }
 
@@ -105,20 +227,14 @@ export async function runHourlyNfeSync(): Promise<void> {
 
     try {
       const sync = await dfeSyncService.fetchNewDocuments(company.id);
-      const imported: { chave: string; valor: number }[] = [];
       let failedDocuments = 0;
       const now = new Date();
 
       for (const doc of sync.documents) {
         try {
-          const result = await importNfeXml(company.id, doc.xml, {
-            status: "detected",
+          await importNfeXml(company.id, doc.xml, {
+            status: "imported",
             nsu: doc.nsu,
-          });
-
-          imported.push({
-            chave: result.chave,
-            valor: Number(result.valorTotal),
           });
         } catch (error) {
           failedDocuments += 1;
@@ -143,32 +259,6 @@ export async function runHourlyNfeSync(): Promise<void> {
           ultimoStatus: normalizeSyncStatus(failedDocuments > 0 ? `success_partial:${failedDocuments}` : "success"),
         },
       });
-
-      if (imported.length > 0) {
-        const text = await aiService.generateProactiveNewNotesReply(company.id, imported);
-
-        for (const number of company.whatsappNumbers) {
-          const outLog = await prisma.messageLog.create({
-            data: {
-              companyId: company.id,
-              phoneE164: number.phoneE164,
-              direction: "out",
-              messageType: "text",
-              content: text,
-              intent: "ajuda",
-              status: "received",
-            },
-          });
-
-          await outboundDispatchService.enqueueOutboundText({
-            companyId: company.id,
-            phone: number.phoneE164,
-            text,
-            intent: "ajuda",
-            messageLogId: outLog.id,
-          });
-        }
-      }
 
       await prisma.jobRun.update({
         where: { id: job.id },
@@ -242,7 +332,35 @@ export async function runHourlyNfeSync(): Promise<void> {
       });
     }
   }
-  } finally {
-    await releaseGlobalSyncLock();
+}
+
+export async function runDailyImportSummaryJob(): Promise<void> {
+  const companies = await prisma.company.findMany({
+    where: {
+      active: true,
+      aiType: "nfe_import",
+      whatsappNumbers: {
+        some: { active: true },
+      },
+    },
+    include: {
+      whatsappNumbers: {
+        where: { active: true },
+      },
+      dfeSyncState: true,
+    },
+  });
+
+  const now = new Date();
+  for (const company of companies) {
+    const cooldownUntil = parseCooldownUntil(company.dfeSyncState?.ultimoStatus);
+    const activeCooldownUntil = cooldownUntil && cooldownUntil.getTime() > now.getTime() ? cooldownUntil : null;
+
+    try {
+      await sendDailyImportSummary(company, now, { cooldownUntil: activeCooldownUntil });
+    } catch (error) {
+      const digestMessage = error instanceof Error ? error.message : "erro desconhecido";
+      console.warn(`[daily-summary] Falha ao enviar resumo diario da empresa ${company.id}: ${digestMessage}`);
+    }
   }
 }

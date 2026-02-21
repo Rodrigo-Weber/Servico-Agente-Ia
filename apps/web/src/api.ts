@@ -11,6 +11,9 @@ import {
   NfeDocument,
   OperationalSettings,
   ServiceType,
+  BillingDashboardSummary,
+  BillingClient,
+  OwnerDashboardSummary,
 } from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "";
@@ -145,6 +148,7 @@ export const api = {
       password: string;
       evolutionInstanceName?: string;
       aiType: Exclude<ServiceType, null>;
+      bookingSector?: "barber" | "clinic" | "car_wash" | "generic";
       active: boolean;
     },
   ) {
@@ -165,6 +169,7 @@ export const api = {
       password?: string;
       evolutionInstanceName?: string | null;
       aiType?: Exclude<ServiceType, null>;
+      bookingSector?: "barber" | "clinic" | "car_wash" | "generic";
       active?: boolean;
     },
   ) {
@@ -415,6 +420,7 @@ export const api = {
         name: string;
         cnpj: string;
         aiType: "barber_booking";
+        bookingSector: "barber" | "clinic" | "car_wash" | "generic";
         active: boolean;
       } | null;
       barberProfile: {
@@ -664,5 +670,195 @@ export const api = {
       method: "DELETE",
       token,
     });
+  },
+
+  // ==========================================
+  // Mocked Billing & CRM API (Temporario ERP)
+  // ==========================================
+
+  async getBillingDashboardSummary(token: string): Promise<BillingDashboardSummary> {
+    // Simulating network delay
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    return {
+      generatedAt: new Date().toISOString(),
+      totals: {
+        clients: 120,
+        pendingAmount: 15400.0,
+        paidAmount: 42000.0,
+        overdueAmount: 5300.0,
+        pendingCount: 45,
+        paidCount: 150,
+        overdueCount: 12,
+      },
+    };
+  },
+
+  async getBillingClients(token: string): Promise<BillingClient[]> {
+    await new Promise((resolve) => setTimeout(resolve, 800));
+
+    // Retorna alguns clientes mocados com boletos/nfe misturados
+    const now = new Date();
+    const past = new Date(now);
+    past.setDate(past.getDate() - 5);
+    const future = new Date(now);
+    future.setDate(future.getDate() + 5);
+
+    return [
+      {
+        id: "cli-1",
+        name: "João Silva",
+        document: "123.456.789-00",
+        email: "joao@example.com",
+        phone: "5511999999991",
+        autoSendEnabled: true,
+        documents: [
+          {
+            id: "doc-1",
+            clientId: "cli-1",
+            type: "boleto",
+            description: "Mensalidade ref. 10/2026",
+            amount: 150.0,
+            dueDate: future.toISOString(),
+            status: "pending",
+            barcode: "00000.00000 00000.000000 00000.000000 0 00000000000000",
+          },
+          {
+            id: "doc-2",
+            clientId: "cli-1",
+            type: "nfe",
+            description: "Serviço de consultoria",
+            amount: 500.0,
+            dueDate: past.toISOString(),
+            status: "paid",
+            paidAt: new Date().toISOString(),
+            nfeKey: "35231012345678000199550010001234561000000011",
+          },
+        ],
+      },
+      {
+        id: "cli-2",
+        name: "Empresa XPTO Ltda",
+        document: "12.345.678/0001-99",
+        email: "financeiro@xpto.com.br",
+        phone: "5511999999992",
+        autoSendEnabled: false,
+        documents: [
+          {
+            id: "doc-3",
+            clientId: "cli-2",
+            type: "boleto",
+            description: "Manutenção de Software",
+            amount: 2500.0,
+            dueDate: past.toISOString(),
+            status: "overdue",
+            barcode: "34191.09008 00000.000000 00000.000000 0 00000000000000",
+          },
+        ],
+      },
+    ];
+  },
+
+  async getBillingConversations(token: string) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    return [
+      {
+        id: "conv-1",
+        phoneE164: "5511999999991",
+        userName: "João Silva",
+        lastMessage: "Certo, vou pagar amanhã.",
+        lastActivityAt: new Date().toISOString(),
+      },
+      {
+        id: "conv-2",
+        phoneE164: "5511999999992",
+        userName: "Financeiro XPTO",
+        lastMessage: "Pode reenviar o boleto?",
+        lastActivityAt: new Date(Date.now() - 3600000).toISOString(),
+      },
+    ];
+  },
+
+  async getBillingMessages(token: string, phoneE164: string) {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const now = new Date();
+    const past = new Date(now.getTime() - 10 * 60000); // 10 mins ago
+
+    return [
+      {
+        id: "msg-1",
+        direction: "out",
+        content: `Olá, seu boleto no valor de R$ 150,00 vence dia ${now.toLocaleDateString()}. Segue o código de barras.`,
+        createdAt: past.toISOString(),
+      },
+      {
+        id: "msg-2",
+        direction: "in",
+        content: phoneE164 === "5511999999992" ? "Pode reenviar o boleto?" : "Certo, vou pagar amanhã.",
+        createdAt: now.toISOString(),
+      },
+    ];
+  },
+
+  async sendBillingMessage(token: string, phoneE164: string, content: string) {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    return {
+      id: `msg-${Date.now()}`,
+      direction: "out",
+      content,
+      createdAt: new Date().toISOString(),
+    };
+  },
+
+  async getOwnerDashboard(_token: string): Promise<OwnerDashboardSummary> {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const now = new Date();
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(now);
+      d.setDate(d.getDate() - (6 - i));
+      return d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit" });
+    });
+    return {
+      generatedAt: now.toISOString(),
+      totals: {
+        pendingBillingAmount: 18750.0,
+        pendingBillingCount: 23,
+        overdueBillingAmount: 4320.5,
+        overdueBillingCount: 7,
+        appointmentsToday: 14,
+        appointmentsMonth: 187,
+        nfesImported: 56,
+        messagesOut: 132,
+        aiResponseRate: 87,
+      },
+      messagesPerDay: days.map((day) => ({
+        day,
+        in: Math.floor(Math.random() * 60) + 20,
+        out: Math.floor(Math.random() * 50) + 15,
+      })),
+      appointmentsPerDay: days.map((day) => ({
+        day,
+        scheduled: Math.floor(Math.random() * 20) + 5,
+        completed: Math.floor(Math.random() * 18) + 3,
+        canceled: Math.floor(Math.random() * 4),
+      })),
+      billingByStatus: [
+        { status: "A Vencer", count: 23 },
+        { status: "Vencidas", count: 7 },
+        { status: "Pagas", count: 150 },
+      ],
+      recentAlerts: [
+        {
+          type: "warning",
+          message: "7 cobranças vencidas há mais de 5 dias sem notificação.",
+          time: "18:02",
+        },
+        {
+          type: "info",
+          message: "56 NF-es importadas com sucesso no último ciclo de sincronização.",
+          time: "01:01",
+        },
+      ],
+    };
   },
 };

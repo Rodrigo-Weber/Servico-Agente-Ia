@@ -46,7 +46,7 @@ export function DashboardLayout({
   }, [sidebarCollapsed]);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#030303]">
+    <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar
         session={session}
         onLogout={onLogout}
@@ -60,7 +60,7 @@ export function DashboardLayout({
       {sidebarOpen ? (
         <div className="absolute inset-0 z-50 flex lg:hidden">
           <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm animate-fade-in"
+            className="fixed inset-0 bg-background/80 backdrop-blur-sm animate-fade-in"
             onClick={() => setSidebarOpen(false)}
           />
           <Sidebar

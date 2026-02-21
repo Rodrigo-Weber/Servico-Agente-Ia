@@ -271,6 +271,23 @@ class AiService {
       },
     }));
 
+    const companyDetails = await prisma.company.findUnique({
+      where: { id: input.companyId },
+      select: { bookingSector: true, aiType: true }
+    });
+
+    let sectorInstructions = "";
+    if (companyDetails?.aiType === "barber_booking") {
+      switch (companyDetails.bookingSector) {
+        case "car_wash":
+          sectorInstructions = "ATENÇAO: O estabelecimento e um LAVA JATO / ESTÉTICA AUTOMOTIVA. Trate os agendamentos como 'Boxes', 'Vagas' ou 'Lavadores' em vez de Barbeiros. Refira-se aos servicos como tipos de lavagem."; break;
+        case "clinic":
+          sectorInstructions = "ATENÇAO: O estabelecimento e uma CLÍNICA / CONSULTÓRIO. Trate os agendamentos referindo-se aos recursos como 'Médicos', 'Doutores' ou 'Especialistas'."; break;
+        case "generic":
+          sectorInstructions = "ATENÇAO: O estabelecimento usa AGENDAMENTO GERAL. Adapte seu vocabulario aos servicos disponiveis."; break;
+      }
+    }
+
     const messages: Array<Record<string, unknown>> = [
       {
         role: "system",
@@ -278,13 +295,14 @@ class AiService {
           prompt,
           "",
           input.systemInstruction,
+          sectorInstructions,
           "",
           "Regras de execucao:",
           "- Use ferramentas quando precisar consultar ou alterar dados.",
           "- Nao invente valores fiscais ou status.",
           "- Antes de importar notas detectadas, confirme explicitamente com o usuario.",
           "- Responda em portugues do Brasil, em texto simples de WhatsApp, sem markdown.",
-        ].join("\n"),
+        ].filter(Boolean).join("\n"),
       },
     ];
 

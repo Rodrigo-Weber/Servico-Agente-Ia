@@ -12,6 +12,7 @@ interface TokenInput {
   companyId: string | null;
   email: string;
   serviceType: CompanyAiType | null;
+  bookingSector?: "barber" | "clinic" | "car_wash" | "generic";
 }
 
 export async function issueTokens(fastify: FastifyInstance, input: TokenInput) {
@@ -21,6 +22,7 @@ export async function issueTokens(fastify: FastifyInstance, input: TokenInput) {
       companyId: input.companyId,
       email: input.email,
       serviceType: input.serviceType,
+      bookingSector: input.bookingSector,
     },
     {
       sub: input.userId,
@@ -35,6 +37,7 @@ export async function issueTokens(fastify: FastifyInstance, input: TokenInput) {
       companyId: input.companyId,
       email: input.email,
       serviceType: input.serviceType,
+      bookingSector: input.bookingSector,
       jti,
     },
     env.JWT_REFRESH_SECRET,
@@ -80,6 +83,7 @@ export function verifyRefreshToken(token: string): {
   companyId: string | null;
   email: string;
   serviceType: CompanyAiType | null;
+  bookingSector?: "barber" | "clinic" | "car_wash" | "generic";
   jti: string;
 } {
   const decoded = jwt.verify(token, env.JWT_REFRESH_SECRET) as jwt.JwtPayload;
@@ -94,6 +98,7 @@ export function verifyRefreshToken(token: string): {
     companyId: (decoded.companyId as string | null) ?? null,
     email: decoded.email as string,
     serviceType: (decoded.serviceType as CompanyAiType | null) ?? null,
+    bookingSector: (decoded.bookingSector as "barber" | "clinic" | "car_wash" | "generic" | undefined) ?? undefined,
     jti: decoded.jti as string,
   };
 }
