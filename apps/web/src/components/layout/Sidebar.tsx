@@ -133,7 +133,7 @@ export function Sidebar({
   return (
     <aside
       className={cn(
-        "flex h-screen flex-col border-r border-border bg-background/95 backdrop-blur-xl transition-[width] duration-300 ease-out",
+        "flex h-screen flex-col border-r border-border/60 bg-background/80 backdrop-blur-3xl transition-[width] duration-300 ease-out shadow-[1px_0_40px_rgba(0,0,0,0.02)] z-50",
         compact ? "w-20" : "w-72",
         mobile ? "w-[86vw] max-w-[330px]" : "",
         className,
@@ -143,12 +143,12 @@ export function Sidebar({
       <div className={cn("border-b border-border flex h-16 items-center shrink-0", compact ? "px-3" : "px-5")}>
         <div className="flex w-full items-center justify-between gap-2">
           <div className={cn("flex items-center gap-3", compact ? "w-full justify-center" : "")}>
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-green-500 to-emerald-600 shadow-[0_0_15px_rgba(34,197,94,0.25)]">
-              <span className="font-mono text-xs font-bold text-white">RW</span>
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm transition-transform hover:scale-105 duration-300">
+              <span className="font-mono text-xs font-bold">RW</span>
             </div>
             {!compact ? (
               <div className="min-w-0">
-                <p className="font-mono text-base font-bold leading-tight text-foreground">
+                <p className="font-mono text-base font-bold leading-tight text-foreground tracking-tight">
                   {"<RW />"}
                 </p>
                 <p className="truncate text-[11px] text-muted-foreground">{roleSubtitle}</p>
@@ -181,11 +181,11 @@ export function Sidebar({
                 onClick={() => onNavigate?.(item.id)}
                 title={compact ? item.label : undefined}
                 className={cn(
-                  "flex w-full items-center rounded-xl text-sm font-medium transition-all duration-200",
+                  "flex w-full items-center rounded-xl text-sm font-semibold transition-all duration-300",
                   compact ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2.5",
                   isActive
-                    ? "bg-gradient-to-r from-green-500/15 to-emerald-500/10 text-green-400 shadow-[inset_0_0_0_1px_rgba(34,197,94,0.15)]"
-                    : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                    ? "bg-primary/10 text-primary shadow-[inset_0_0_0_1px_rgba(16,185,129,0.2)]"
+                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                 )}
               >
                 <Icon className={cn("shrink-0", compact ? "h-5 w-5" : "h-4.5 w-4.5")} />

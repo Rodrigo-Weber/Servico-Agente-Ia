@@ -12,6 +12,7 @@ import { authRoutes } from "./modules/auth/routes.js";
 import { adminRoutes } from "./modules/admin/routes.js";
 import { companyRoutes } from "./modules/company/routes.js";
 import { barberRoutes } from "./modules/barber/routes.js";
+import { billingRoutes } from "./modules/billing/routes.js";
 import { webhooksRoutes } from "./modules/webhooks/routes.js";
 import { prisma } from "./lib/prisma.js";
 import { disconnectRedisClients } from "./lib/redis.js";
@@ -47,6 +48,7 @@ export async function buildApp() {
   await adminRoutes(app);
   await companyRoutes(app);
   await barberRoutes(app);
+  await billingRoutes(app);
   await webhooksRoutes(app);
 
   if (env.SERVE_WEB_STATIC) {

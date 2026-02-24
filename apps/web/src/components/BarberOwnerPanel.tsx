@@ -1377,7 +1377,7 @@ function StatCard({
   const valueIsNumeric = typeof value === "number";
 
   return (
-    <Card className="h-full min-h-[108px] border-border bg-gradient-to-b from-white/[0.08] to-transparent transition-all hover:border-primary/25 hover:bg-muted/50">
+    <Card className="h-full min-h-[108px] border-border bg-card transition-all hover:border-primary/25 hover:bg-muted/50">
       <CardContent className="grid h-full grid-cols-[auto_minmax(0,1fr)] items-center gap-4 p-4 sm:p-5">
         <div className="grid h-11 w-11 place-items-center rounded-xl bg-primary/12 text-primary ring-1 ring-inset ring-primary/20">
           <Icon className="h-5 w-5" />

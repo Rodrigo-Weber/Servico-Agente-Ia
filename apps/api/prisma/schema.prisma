@@ -71,6 +71,12 @@ enum AppointmentStatus {
   canceled
 }
 
+enum BillingDocumentStatus {
+  pending
+  paid
+  overdue
+}
+
 model User {
   id            String         @id @default(cuid())
   role          UserRole
@@ -112,6 +118,8 @@ model Company {
   rateLimitPolicies RateLimitPolicy[]
   operationalLimit CompanyOperationalLimit?
   jobRuns        JobRun[]
+  billingSuppliers BillingSupplier[]
+  billingDocuments BillingDocument[]
 }
 
 model BarberProfile {
@@ -187,6 +195,54 @@ model BarberAppointment {
   @@index([companyId, startsAt])
   @@index([barberId, startsAt])
   @@index([status, startsAt])
+}
+
+model BillingSupplier {
+  id              String            @id @default(cuid())
+  companyId       String
+  company         Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  externalCode    String
+  name            String
+  city            String?
+  document        String?
+  email           String?
+  phoneE164       String?
+  autoSendEnabled Boolean           @default(false)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  documents       BillingDocument[]
+
+  @@unique([companyId, externalCode])
+  @@index([companyId, name])
+}
+
+model BillingDocument {
+  id                 String                @id @default(cuid())
+  companyId          String
+  company            Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  supplierId         String
+  supplier           BillingSupplier       @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  externalKey        String
+  description        String
+  duplicateNumber    String?
+  installment        Int?
+  amount             Decimal               @db.Decimal(15, 2)
+  dueDate            DateTime
+  issueDate          DateTime?
+  paidAt             DateTime?
+  status             BillingDocumentStatus @default(pending)
+  operationType      String?
+  boletoLine         String?
+  barcode            String?
+  ourNumber          String?
+  notificationCount  Int                   @default(0)
+  notificationLastAt DateTime?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  @@unique([companyId, externalKey])
+  @@index([companyId, status, dueDate])
+  @@index([supplierId, dueDate])
 }
 
 model CompanyCertificate {

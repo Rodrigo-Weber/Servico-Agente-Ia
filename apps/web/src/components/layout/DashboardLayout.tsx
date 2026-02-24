@@ -46,7 +46,7 @@ export function DashboardLayout({
   }, [sidebarCollapsed]);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="flex h-screen overflow-hidden bg-background relative selection:bg-primary/20 selection:text-primary">
       <Sidebar
         session={session}
         onLogout={onLogout}

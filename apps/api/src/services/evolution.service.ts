@@ -187,6 +187,81 @@ class EvolutionService {
     throw lastError instanceof Error ? lastError : new Error("Falha ao enviar mensagem no WhatsApp");
   }
 
+  async sendDocument(
+    phone: string,
+    input: {
+      base64: string;
+      fileName: string;
+      mimeType?: string;
+      caption?: string;
+    },
+    instanceNameOverride?: string,
+  ): Promise<void> {
+    const { client, instanceName } = await this.getClientContext(instanceNameOverride);
+    const mimeType = input.mimeType || "application/pdf";
+    const base64Plain = input.base64.replace(/^data:[^;]+;base64,/, "");
+    const base64DataUri = `data:${mimeType};base64,${base64Plain}`;
+
+    const payloads: Array<Record<string, unknown>> = [
+      {
+        number: phone,
+        mediatype: "document",
+        mimetype: mimeType,
+        media: base64DataUri,
+        fileName: input.fileName,
+        caption: input.caption ?? "",
+        options: {
+          delay: 0,
+          presence: "composing",
+        },
+      },
+      {
+        number: phone,
+        mediatype: "document",
+        mimetype: mimeType,
+        media: base64Plain,
+        fileName: input.fileName,
+        caption: input.caption ?? "",
+        options: {
+          delay: 0,
+          presence: "composing",
+        },
+      },
+      {
+        number: phone,
+        mediatype: "document",
+        mimetype: mimeType,
+        mediabase64: base64Plain,
+        fileName: input.fileName,
+        caption: input.caption ?? "",
+      },
+      {
+        number: phone,
+        mediatype: "document",
+        mimetype: mimeType,
+        mediabase64: base64DataUri,
+        filename: input.fileName,
+        caption: input.caption ?? "",
+      },
+    ];
+
+    const paths = [`/message/sendMedia/${instanceName}`, "/message/sendMedia", `/message/sendFile/${instanceName}`, "/message/sendFile"];
+
+    let lastError: unknown;
+    for (const path of paths) {
+      for (const payload of payloads) {
+        try {
+          await client.post(path, payload);
+          return;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error("Falha ao enviar documento no WhatsApp");
+  }
+
   async downloadMedia(url: string): Promise<Buffer> {
     const { client } = await this.getClientContext();
     const response = await client.get(url, {

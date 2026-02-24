@@ -13,10 +13,12 @@ import {
   ServiceType,
   BillingDashboardSummary,
   BillingClient,
+  BillingConversation,
+  BillingMessage,
   OwnerDashboardSummary,
 } from "./types";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "";
+const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? "http://localhost:3333" : "");
 export const UNAUTHORIZED_EVENT_NAME = "weber:unauthorized";
 
 export class ApiError extends Error {
@@ -672,142 +674,108 @@ export const api = {
     });
   },
 
-  // ==========================================
-  // Mocked Billing & CRM API (Temporario ERP)
-  // ==========================================
-
-  async getBillingDashboardSummary(token: string): Promise<BillingDashboardSummary> {
-    // Simulating network delay
-    await new Promise((resolve) => setTimeout(resolve, 600));
-
-    return {
-      generatedAt: new Date().toISOString(),
-      totals: {
-        clients: 120,
-        pendingAmount: 15400.0,
-        paidAmount: 42000.0,
-        overdueAmount: 5300.0,
-        pendingCount: 45,
-        paidCount: 150,
-        overdueCount: 12,
-      },
-    };
+  getBillingDashboardSummary(token: string): Promise<BillingDashboardSummary> {
+    return request<BillingDashboardSummary>("/billing/dashboard/summary", { token });
   },
 
-  async getBillingClients(token: string): Promise<BillingClient[]> {
-    await new Promise((resolve) => setTimeout(resolve, 800));
-
-    // Retorna alguns clientes mocados com boletos/nfe misturados
-    const now = new Date();
-    const past = new Date(now);
-    past.setDate(past.getDate() - 5);
-    const future = new Date(now);
-    future.setDate(future.getDate() + 5);
-
-    return [
-      {
-        id: "cli-1",
-        name: "João Silva",
-        document: "123.456.789-00",
-        email: "joao@example.com",
-        phone: "5511999999991",
-        autoSendEnabled: true,
-        documents: [
-          {
-            id: "doc-1",
-            clientId: "cli-1",
-            type: "boleto",
-            description: "Mensalidade ref. 10/2026",
-            amount: 150.0,
-            dueDate: future.toISOString(),
-            status: "pending",
-            barcode: "00000.00000 00000.000000 00000.000000 0 00000000000000",
-          },
-          {
-            id: "doc-2",
-            clientId: "cli-1",
-            type: "nfe",
-            description: "Serviço de consultoria",
-            amount: 500.0,
-            dueDate: past.toISOString(),
-            status: "paid",
-            paidAt: new Date().toISOString(),
-            nfeKey: "35231012345678000199550010001234561000000011",
-          },
-        ],
-      },
-      {
-        id: "cli-2",
-        name: "Empresa XPTO Ltda",
-        document: "12.345.678/0001-99",
-        email: "financeiro@xpto.com.br",
-        phone: "5511999999992",
-        autoSendEnabled: false,
-        documents: [
-          {
-            id: "doc-3",
-            clientId: "cli-2",
-            type: "boleto",
-            description: "Manutenção de Software",
-            amount: 2500.0,
-            dueDate: past.toISOString(),
-            status: "overdue",
-            barcode: "34191.09008 00000.000000 00000.000000 0 00000000000000",
-          },
-        ],
-      },
-    ];
+  getBillingClients(token: string): Promise<BillingClient[]> {
+    return request<BillingClient[]>("/billing/clients", { token });
   },
 
-  async getBillingConversations(token: string) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    return [
-      {
-        id: "conv-1",
-        phoneE164: "5511999999991",
-        userName: "João Silva",
-        lastMessage: "Certo, vou pagar amanhã.",
-        lastActivityAt: new Date().toISOString(),
-      },
-      {
-        id: "conv-2",
-        phoneE164: "5511999999992",
-        userName: "Financeiro XPTO",
-        lastMessage: "Pode reenviar o boleto?",
-        lastActivityAt: new Date(Date.now() - 3600000).toISOString(),
-      },
-    ];
+  updateBillingClient(
+    token: string,
+    clientId: string,
+    payload: {
+      autoSendEnabled?: boolean;
+      phone?: string | null;
+      email?: string | null;
+    },
+  ) {
+    return request<{
+      id: string;
+      autoSendEnabled: boolean;
+      phone: string | null;
+      email: string | null;
+    }>(`/billing/clients/${clientId}`, {
+      method: "PATCH",
+      token,
+      body: payload,
+    });
   },
 
-  async getBillingMessages(token: string, phoneE164: string) {
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    const now = new Date();
-    const past = new Date(now.getTime() - 10 * 60000); // 10 mins ago
-
-    return [
-      {
-        id: "msg-1",
-        direction: "out",
-        content: `Olá, seu boleto no valor de R$ 150,00 vence dia ${now.toLocaleDateString()}. Segue o código de barras.`,
-        createdAt: past.toISOString(),
-      },
-      {
-        id: "msg-2",
-        direction: "in",
-        content: phoneE164 === "5511999999992" ? "Pode reenviar o boleto?" : "Certo, vou pagar amanhã.",
-        createdAt: now.toISOString(),
-      },
-    ];
+  notifyBillingDocument(token: string, documentId: string) {
+    return request<{
+      ok: boolean;
+      phone: string;
+      fallbackPhoneUsed: boolean;
+      message: string;
+    }>(`/billing/documents/${documentId}/notify`, {
+      method: "POST",
+      token,
+      body: {},
+    });
   },
 
-  async sendBillingMessage(token: string, phoneE164: string, content: string) {
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    return {
-      id: `msg-${Date.now()}`,
-      direction: "out",
-      content,
-      createdAt: new Date().toISOString(),
-    };
+  getBillingConversations(token: string): Promise<BillingConversation[]> {
+    return request<BillingConversation[]>("/billing/crm/conversations", { token });
+  },
+
+  getBillingMessages(token: string, phoneE164: string): Promise<BillingMessage[]> {
+    return request<BillingMessage[]>(`/billing/crm/messages/${encodeURIComponent(phoneE164)}`, { token });
+  },
+
+  deleteBillingConversation(token: string, phoneE164: string) {
+    return request<{
+      ok: boolean;
+      deletedMessages: number;
+      deletedMemories: number;
+    }>(`/billing/crm/conversations/${encodeURIComponent(phoneE164)}`, {
+      method: "DELETE",
+      token,
+    });
+  },
+
+  sendBillingMessage(token: string, phoneE164: string, content: string): Promise<BillingMessage> {
+    return request<BillingMessage>("/billing/crm/messages", {
+      method: "POST",
+      token,
+      body: {
+        phone: phoneE164,
+        content,
+      },
+    });
+  },
+
+  importBillingCsv(token: string) {
+    return request<{
+      suppliersCreated: number;
+      suppliersUpdated: number;
+      documentsCreated: number;
+      documentsUpdated: number;
+      suppliersTotal: number;
+      documentsTotal: number;
+      skippedDocuments: number;
+      fornecedoresPath: string;
+      documentosPath: string;
+    }>("/billing/import/csv", {
+      method: "POST",
+      token,
+      body: {},
+    });
+  },
+
+  getBillingMe(token: string) {
+    return request<{
+      company: {
+        id: string;
+        name: string;
+        cnpj: string;
+        email: string;
+        active: boolean;
+      };
+    }>("/billing/me", {
+      token,
+    });
   },
 
   async getOwnerDashboard(_token: string): Promise<OwnerDashboardSummary> {

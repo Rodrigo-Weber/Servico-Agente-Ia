@@ -330,7 +330,7 @@ export default function App() {
       sessionCountdownLabel={formatSessionCountdown(sessionRemainingSeconds)}
     >
       {session.user.role === "admin" ? <AdminPanel token={session.accessToken} activeView={activeView} /> : null}
-      {session.user.role === "company" && activeView === "dashboard" ? (
+      {session.user.role === "company" && session.user.serviceType !== "billing" && activeView === "dashboard" ? (
         <OwnerDashboard session={session} token={session.accessToken} />
       ) : null}
       {session.user.role === "company" && session.user.serviceType === "nfe_import" && activeView !== "dashboard" ? (
@@ -339,7 +339,7 @@ export default function App() {
       {session.user.role === "company" && session.user.serviceType === "barber_booking" && activeView !== "dashboard" ? (
         <BarberOwnerPanel token={session.accessToken} activeView={activeView} />
       ) : null}
-      {session.user.role === "company" && session.user.serviceType === "billing" && activeView !== "dashboard" ? (
+      {session.user.role === "company" && session.user.serviceType === "billing" ? (
         <BillingPanel token={session.accessToken} activeView={activeView} />
       ) : null}
       {session.user.role === "barber" ? <BarberStaffPanel token={session.accessToken} activeView={activeView} /> : null}

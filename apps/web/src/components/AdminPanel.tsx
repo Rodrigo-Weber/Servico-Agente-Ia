@@ -1501,7 +1501,7 @@ function StatCard({
   const valueIsNumeric = typeof value === "number";
 
   return (
-    <Card className="h-full min-h-[108px] border-border bg-gradient-to-b from-white/[0.08] to-transparent transition-all hover:border-green-500/20 hover:bg-muted/50">
+    <Card className="h-full min-h-[108px] border-border bg-card transition-all hover:border-primary/20 hover:bg-muted/50">
       <CardContent className="grid h-full grid-cols-[auto_minmax(0,1fr)] items-center gap-4 p-4 sm:p-5">
         <div className="grid h-12 w-12 place-items-center rounded-xl bg-green-500/10 text-green-400 ring-1 ring-inset ring-green-500/20">
           <Icon className="h-6 w-6" />

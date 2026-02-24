@@ -26,7 +26,7 @@ function SummaryCard({
     detail?: string;
 }) {
     return (
-        <div className="flex flex-col rounded-2xl border border-border bg-card p-5 shadow-sm">
+        <div className="flex flex-col rounded-xl border border-border bg-card p-5 shadow-sm transition-colors duration-300">
             <div className="flex items-center gap-3">
                 <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
                     <Icon className="h-5 w-5" />
@@ -67,12 +67,12 @@ export function BillingDashboard({ token, companyName }: BillingDashboardProps) 
 
     return (
         <div className="space-y-6">
-            <div className="rounded-2xl border border-border bg-card p-5">
+            <div className="rounded-xl border border-border bg-card p-5 shadow-sm enter-up">
                 <p className="text-sm text-muted-foreground">Operação da empresa</p>
                 <h2 className="font-display text-2xl font-bold text-foreground">{companyName}</h2>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-4">
+            <div className="grid gap-4 md:grid-cols-4 enter-up" style={{ animationDelay: '0.1s' }}>
                 <SummaryCard
                     icon={Users2}
                     label="Clientes Ativos"

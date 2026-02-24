@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { z } from "zod";
 
 const boolishSchema = z.union([z.string(), z.boolean(), z.undefined()]).transform((value) => {

@@ -349,6 +349,22 @@ export interface BillingClient {
   documents: BillingDocument[];
 }
 
+export interface BillingConversation {
+  id: string;
+  phoneE164: string;
+  userName: string | null;
+  lastMessage: string;
+  lastActivityAt: string;
+}
+
+export interface BillingMessage {
+  id: string;
+  direction: "in" | "out";
+  content: string;
+  createdAt: string;
+  status?: string;
+}
+
 export interface OwnerDashboardAlert {
   type: "error" | "warning" | "info";
   message: string;

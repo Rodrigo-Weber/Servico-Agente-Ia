@@ -44,7 +44,7 @@ interface KpiCardProps {
 
 function KpiCard({ icon: Icon, label, value, detail, accent = "bg-muted" }: KpiCardProps) {
     return (
-        <div className="flex flex-col rounded-2xl border border-border bg-card p-5 shadow-sm gap-4 hover:shadow-md transition-shadow">
+        <div className="flex flex-col rounded-xl border border-border bg-card p-5 shadow-sm gap-4 transition-colors duration-300">
             <div className="flex items-center gap-3">
                 <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${accent} text-foreground`}>
                     <Icon className="h-5 w-5" />
@@ -92,9 +92,9 @@ export function OwnerDashboard({ session, token }: OwnerDashboardProps) {
     const serviceType = session.user.serviceType;
 
     return (
-        <div className="space-y-8">
+        <div className="space-y-8 enter-up">
             {/* Welcome header */}
-            <div className="rounded-2xl bg-gradient-to-br from-primary/20 via-primary/10 to-transparent border border-primary/20 p-6">
+            <div className="rounded-xl bg-card border border-border p-6 shadow-sm">
                 <h2 className="font-display text-2xl font-bold text-foreground">
                     Visão Geral da Operação 🚀
                 </h2>
@@ -170,7 +170,7 @@ export function OwnerDashboard({ session, token }: OwnerDashboardProps) {
             {/* Charts Row */}
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
                 {/* Messages over time */}
-                <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+                <div className="rounded-xl border border-border bg-card p-6 shadow-sm transition-colors duration-300">
                     <h3 className="mb-4 font-semibold text-foreground">Mensagens por Dia (7 dias)</h3>
                     <ResponsiveContainer width="100%" height={220}>
                         <AreaChart data={summary.messagesPerDay}>
@@ -217,7 +217,7 @@ export function OwnerDashboard({ session, token }: OwnerDashboardProps) {
                 </div>
 
                 {/* Performance by service or billing */}
-                <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+                <div className="rounded-xl border border-border bg-card p-6 shadow-sm transition-colors duration-300">
                     <h3 className="mb-4 font-semibold text-foreground">
                         {serviceType === "billing" ? "Cobranças por Status (Mês)" : "Agendamentos por Dia (7 dias)"}
                     </h3>
@@ -253,7 +253,7 @@ export function OwnerDashboard({ session, token }: OwnerDashboardProps) {
             </div>
 
             {/* Recent Activity / Alerts */}
-            <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+            <div className="rounded-xl border border-border bg-card p-6 shadow-sm transition-colors duration-300">
                 <h3 className="mb-4 font-semibold text-foreground">Alertas e Atividade Recente</h3>
                 <div className="space-y-2">
                     {summary.recentAlerts.length === 0 ? (
@@ -263,10 +263,10 @@ export function OwnerDashboard({ session, token }: OwnerDashboardProps) {
                             <div
                                 key={i}
                                 className={`flex items-start gap-3 rounded-xl border p-3 text-sm ${alert.type === "error"
-                                        ? "border-red-500/30 bg-red-500/10 text-red-400"
-                                        : alert.type === "warning"
-                                            ? "border-yellow-500/30 bg-yellow-500/10 text-yellow-400"
-                                            : "border-green-500/30 bg-green-500/10 text-green-400"
+                                    ? "border-red-500/30 bg-red-500/10 text-red-400"
+                                    : alert.type === "warning"
+                                        ? "border-yellow-500/30 bg-yellow-500/10 text-yellow-400"
+                                        : "border-green-500/30 bg-green-500/10 text-green-400"
                                     }`}
                             >
                                 <AlertOctagon className="h-4 w-4 mt-0.5 shrink-0" />
