@@ -20,6 +20,15 @@ interface NaturalReplyInput {
   actionHint?: string;
 }
 
+interface BookingNaturalReplyInput {
+  companyId: string;
+  userMessage: string;
+  intent: "listar_servicos" | "agendar" | "cancelar" | "agenda" | "recibo" | "fidelidade" | "ajuda";
+  operationSummary: string;
+  shouldAskAction?: boolean;
+  actionHint?: string;
+}
+
 interface ProactiveNfe {
   chave: string;
   valor: number;
@@ -169,12 +178,27 @@ class AiService {
   async generateNaturalReply(input: NaturalReplyInput): Promise<string> {
     const prompt = await this.resolvePrompt(input.companyId);
     const settings = await appConfigService.getSettings();
+    const sectorInstructions = await this.resolveBookingSectorInstructions(input.companyId);
 
     if (!this.isAiProviderConfigured(settings.groqApiKey)) {
       return this.providerUnavailableReply("A chave da IA nao esta configurada.");
     }
 
-    const systemPrompt = `${prompt}\n\nRegras adicionais desta resposta:\n- Responda sempre em portugues do Brasil.\n- Baseie-se somente no contexto operacional enviado.\n- Nao invente dados.\n- Seja objetiva e natural.\n- Escreva em texto simples para WhatsApp (sem markdown).\n- Nao use caracteres de markdown como *, _, \`, # ou blocos de codigo.\n- Para lista, use somente linhas iniciadas com "- ".`;
+    const systemPrompt = [
+      prompt,
+      sectorInstructions,
+      "",
+      "Regras adicionais desta resposta:",
+      "- Responda sempre em portugues do Brasil.",
+      "- Baseie-se somente no contexto operacional enviado.",
+      "- Nao invente dados.",
+      "- Seja objetiva e natural.",
+      "- Escreva em texto simples para WhatsApp (sem markdown).",
+      "- Nao use caracteres de markdown como *, _, `, # ou blocos de codigo.",
+      '- Para lista, use somente linhas iniciadas com "- ".',
+    ]
+      .filter(Boolean)
+      .join("\n");
 
     const userPayload = {
       objetivo: "Responder o cliente de forma natural e profissional com base no estado real do sistema.",
@@ -223,6 +247,82 @@ class AiService {
     }
   }
 
+  async generateBookingNaturalReply(input: BookingNaturalReplyInput): Promise<string> {
+    const prompt = await this.resolvePrompt(input.companyId, "barber_booking");
+    const settings = await appConfigService.getSettings();
+    const sectorInstructions = await this.resolveBookingSectorInstructions(input.companyId);
+
+    if (!this.isAiProviderConfigured(settings.groqApiKey)) {
+      return this.fallbackBookingReply(input.operationSummary, input.shouldAskAction, input.actionHint);
+    }
+
+    const systemPrompt = [
+      prompt,
+      sectorInstructions,
+      "",
+      "Contexto adicional deste atendimento:",
+      "- Este fluxo e de agendamento operacional (barbearia, clinica, lava jato ou agenda generica).",
+      "- Use termos do setor da empresa quando estiverem disponiveis no contexto.",
+      "- Preserve exatamente os dados operacionais informados no resumo (nome, servico, horario, status).",
+      "- Nao invente disponibilidade, preco, duracao, recurso, profissional ou agendamento.",
+      "- Nao invente categoria/tipo de servico (ex.: simples, premium, completa) se nao estiver no resumo operacional.",
+      "- Se houver apenas um servico no resumo, trate esse servico como selecionado e nao pergunte novamente o tipo.",
+      "- Mantenha continuidade da conversa: nao reinicie atendimento em toda mensagem.",
+      "- Evite bordoes repetitivos no inicio das respostas (ex.: 'E ai', 'Bora', 'Tudo certo').",
+      "- Responda em texto simples de WhatsApp, sem markdown.",
+      "- Formate com frases curtas e claras; use lista somente quando necessario.",
+      "",
+      "Objetivo da resposta:",
+      "- Transformar o resumo operacional em uma mensagem natural, clara e curta para o cliente.",
+      "- Se houver pendencia de dados, pedir somente o que falta.",
+      "- Se a operacao foi concluida, confirmar o resultado e orientar o proximo passo.",
+    ].join("\n");
+
+    const userPayload = {
+      intencao_detectada: input.intent,
+      mensagem_usuario: input.userMessage,
+      resumo_operacional: input.operationSummary,
+      deve_perguntar_proxima_acao: Boolean(input.shouldAskAction),
+      sugestao_de_acao: input.actionHint ?? "",
+    };
+
+    try {
+      const response = await axios.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        {
+          model: settings.groqModel,
+          temperature: 0.35,
+          messages: [
+            {
+              role: "system",
+              content: systemPrompt,
+            },
+            {
+              role: "user",
+              content: JSON.stringify(userPayload),
+            },
+          ],
+        },
+        {
+          timeout: 15000,
+          headers: {
+            Authorization: `Bearer ${settings.groqApiKey}`,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+
+      const text = response.data?.choices?.[0]?.message?.content;
+      if (typeof text === "string" && text.trim().length > 0) {
+        return this.limitLength(this.normalizeWhatsappText(text), 1400);
+      }
+    } catch {
+      // fallback abaixo garante disponibilidade mesmo sem IA.
+    }
+
+    return this.fallbackBookingReply(input.operationSummary, input.shouldAskAction, input.actionHint);
+  }
+
   async generateProactiveNewNotesReply(companyId: string, notes: ProactiveNfe[]): Promise<string> {
     const total = notes.reduce((acc, item) => acc + item.valor, 0);
     const preview = notes
@@ -251,6 +351,7 @@ class AiService {
   async runToolAgent(input: AgentRunInput): Promise<AgentRunResult> {
     const prompt = await this.resolvePrompt(input.companyId);
     const settings = await appConfigService.getSettings();
+    const sectorInstructions = await this.resolveBookingSectorInstructions(input.companyId);
 
     if (!this.isAiProviderConfigured(settings.groqApiKey)) {
       return {
@@ -271,23 +372,6 @@ class AiService {
       },
     }));
 
-    const companyDetails = await prisma.company.findUnique({
-      where: { id: input.companyId },
-      select: { bookingSector: true, aiType: true }
-    });
-
-    let sectorInstructions = "";
-    if (companyDetails?.aiType === "barber_booking") {
-      switch (companyDetails.bookingSector) {
-        case "car_wash":
-          sectorInstructions = "ATENÇAO: O estabelecimento e um LAVA JATO / ESTÉTICA AUTOMOTIVA. Trate os agendamentos como 'Boxes', 'Vagas' ou 'Lavadores' em vez de Barbeiros. Refira-se aos servicos como tipos de lavagem."; break;
-        case "clinic":
-          sectorInstructions = "ATENÇAO: O estabelecimento e uma CLÍNICA / CONSULTÓRIO. Trate os agendamentos referindo-se aos recursos como 'Médicos', 'Doutores' ou 'Especialistas'."; break;
-        case "generic":
-          sectorInstructions = "ATENÇAO: O estabelecimento usa AGENDAMENTO GERAL. Adapte seu vocabulario aos servicos disponiveis."; break;
-      }
-    }
-
     const messages: Array<Record<string, unknown>> = [
       {
         role: "system",
@@ -300,7 +384,7 @@ class AiService {
           "Regras de execucao:",
           "- Use ferramentas quando precisar consultar ou alterar dados.",
           "- Nao invente valores fiscais ou status.",
-          "- Antes de importar notas detectadas, confirme explicitamente com o usuario.",
+          "- Antes de executar acoes sensiveis, confirme explicitamente com o usuario.",
           "- Responda em portugues do Brasil, em texto simples de WhatsApp, sem markdown.",
         ].filter(Boolean).join("\n"),
       },
@@ -473,6 +557,42 @@ class AiService {
     }
 
     return base;
+  }
+
+  private fallbackBookingReply(operationSummary: string, shouldAskAction?: boolean, actionHint?: string): string {
+    const base = this.normalizeWhatsappText(operationSummary || "");
+    if (!shouldAskAction) {
+      return base;
+    }
+
+    const hint = this.normalizeWhatsappText(actionHint || "Quer que eu continue com o proximo passo?");
+    if (!base) {
+      return hint;
+    }
+
+    return `${base}\n\n${hint}`;
+  }
+
+  private async resolveBookingSectorInstructions(companyId: string): Promise<string> {
+    const companyDetails = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: { bookingSector: true, aiType: true },
+    });
+
+    if (companyDetails?.aiType !== "barber_booking") {
+      return "";
+    }
+
+    switch (companyDetails.bookingSector) {
+      case "car_wash":
+        return "ATENCAO: O estabelecimento e um LAVA JATO/ESTETICA AUTOMOTIVA. Use termos como box, vaga, lavador e tipo de lavagem, evitando vocabulario de barbearia.";
+      case "clinic":
+        return "ATENCAO: O estabelecimento e uma CLINICA/CONSULTORIO. Use termos como profissional, medico(a), doutor(a) ou especialista.";
+      case "generic":
+        return "ATENCAO: O estabelecimento usa AGENDAMENTO GENERICO. Adapte o vocabulario aos servicos e recursos cadastrados.";
+      default:
+        return "";
+    }
   }
 
   private isAiProviderConfigured(apiKey: string | null | undefined): boolean {

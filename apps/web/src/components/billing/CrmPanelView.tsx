@@ -3,8 +3,10 @@ import { api } from "../../api";
 import { BillingConversation, BillingMessage } from "../../types";
 import {
   Clock3,
+  Download,
   Loader2,
   MessageSquare,
+  Paperclip,
   Phone,
   Search,
   Send,
@@ -68,6 +70,7 @@ export function CrmPanelView({ token }: CrmPanelViewProps) {
   const [sending, setSending] = useState(false);
   const [search, setSearch] = useState("");
   const [deletingConversation, setDeletingConversation] = useState(false);
+  const [downloadingMessageId, setDownloadingMessageId] = useState<string | null>(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -210,6 +213,23 @@ export function CrmPanelView({ token }: CrmPanelViewProps) {
     }
   }
 
+  async function handleDownloadAttachment(message: BillingMessage) {
+    if (!message.attachment?.available || downloadingMessageId) {
+      return;
+    }
+
+    setDownloadingMessageId(message.id);
+    try {
+      const fallbackName = message.attachment.fileName || "anexo.bin";
+      await api.downloadBillingMessageAttachment(token, message.id, fallbackName);
+      toast.success("Anexo baixado com sucesso.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao baixar anexo.");
+    } finally {
+      setDownloadingMessageId(null);
+    }
+  }
+
   if (loadingConv) {
     return <SkeletonDashboard />;
   }
@@ -242,6 +262,8 @@ export function CrmPanelView({ token }: CrmPanelViewProps) {
             ) : (
               filteredConversations.map((conversation) => {
                 const selected = conversation.phoneE164 === selectedPhone;
+                const lastMessage = conversation.lastMessage || "";
+                const hasAttachmentPreview = lastMessage.trim().toLowerCase().startsWith("[arquivo]");
                 return (
                   <button
                     key={conversation.id}
@@ -251,8 +273,8 @@ export function CrmPanelView({ token }: CrmPanelViewProps) {
                         ? "border-emerald-500/50 bg-emerald-500/10 shadow-[0_0_0_1px_rgba(16,185,129,0.15)]"
                         : "border-border bg-card/40 hover:border-emerald-500/30 hover:bg-muted/40"
                       }`}
-                  >
-                    <div className="flex items-center gap-3">
+                    >
+                      <div className="flex items-center gap-3">
                       <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-muted font-semibold text-foreground">
                         {getInitials(conversation)}
                       </div>
@@ -266,7 +288,10 @@ export function CrmPanelView({ token }: CrmPanelViewProps) {
                         <p className="truncate text-[11px] text-muted-foreground">+{conversation.phoneE164}</p>
                       </div>
                     </div>
-                    <p className="mt-2 truncate text-xs text-muted-foreground">{conversation.lastMessage}</p>
+                    <div className="mt-2 flex items-center gap-1.5">
+                      {hasAttachmentPreview ? <Paperclip className="h-3.5 w-3.5 text-muted-foreground" /> : null}
+                      <p className="truncate text-xs text-muted-foreground">{lastMessage}</p>
+                    </div>
                   </button>
                 );
               })
@@ -320,6 +345,8 @@ export function CrmPanelView({ token }: CrmPanelViewProps) {
                   <div className="space-y-3">
                     {crmMessages.map((message) => {
                       const outgoing = message.direction === "out";
+                      const isMedia = message.messageType === "media";
+                      const hasAttachment = Boolean(message.attachment?.available);
                       return (
                         <div key={message.id} className={`flex ${outgoing ? "justify-end" : "justify-start"}`}>
                           <div
@@ -328,7 +355,32 @@ export function CrmPanelView({ token }: CrmPanelViewProps) {
                                 : "rounded-bl-md border-border bg-muted/20"
                               }`}
                           >
+                            {isMedia ? (
+                              <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <Paperclip className="h-3.5 w-3.5" />
+                                <span>{message.attachment?.fileName || "Arquivo"}</span>
+                              </div>
+                            ) : null}
                             <p className="whitespace-pre-wrap break-words text-sm text-foreground">{message.content}</p>
+                            {hasAttachment ? (
+                              <div className="mt-2 flex justify-end">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => void handleDownloadAttachment(message)}
+                                  disabled={downloadingMessageId === message.id}
+                                >
+                                  {downloadingMessageId === message.id ? (
+                                    <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <Download className="mr-1 h-3.5 w-3.5" />
+                                  )}
+                                  Baixar
+                                </Button>
+                              </div>
+                            ) : null}
                             <div className="mt-1.5 flex items-center justify-end gap-2 text-[10px] text-muted-foreground">
                               <span>{outgoing ? "Voce" : "Cliente"}</span>
                               <span>•</span>

@@ -1,5 +1,4 @@
 import { prisma } from "../../lib/prisma.js";
-import { getRedisClient } from "../../lib/redis.js";
 import { env } from "../../config/env.js";
 
 type PolicyScope = "global" | "instance" | "company" | "contact";
@@ -193,71 +192,13 @@ class DispatchRateLimiterService {
       return { delayMs: 0 };
     }
 
-    const redis = getRedisClient();
-
-    try {
-      const [policies, companyLimit] = await Promise.all([
-        buildEffectivePolicies(input),
-        prisma.companyOperationalLimit.findUnique({
-          where: { companyId: input.companyId },
-          select: { active: true, dailyOutboundCap: true },
-        }),
-      ]);
-
-      let minDelayMs = 0;
-      let maxDelayMs = 0;
-      let blockedForMs = 0;
-
-      for (const policy of policies) {
-        minDelayMs = Math.max(minDelayMs, policy.minDelayMs);
-        maxDelayMs = Math.max(maxDelayMs, policy.maxDelayMs);
-
-        const key = minuteWindowKey(policy.key);
-        const count = await redis.incr(key);
-        if (count === 1) {
-          await redis.expire(key, 65);
-        }
-
-        if (count > policy.maxPerMinute) {
-          const ttlMs = await redis.pttl(key);
-          blockedForMs = Math.max(blockedForMs, ttlMs > 0 ? ttlMs : 1_000);
-        }
-      }
-
-      const effectiveDailyCap = companyLimit?.active === false ? null : companyLimit?.dailyOutboundCap ?? 500;
-      if (effectiveDailyCap !== null) {
-        const dayKey = dayWindowKey(`rl:day:${input.companyId}`);
-        const currentDayCount = Number((await redis.get(dayKey)) || "0");
-        if (currentDayCount >= effectiveDailyCap) {
-          return {
-            delayMs: 60_000,
-            reason: "daily_cap",
-          };
-        }
-      }
-
-      if (blockedForMs > 0) {
-        const randomDelay = jitter(minDelayMs, maxDelayMs || minDelayMs);
-        return { delayMs: blockedForMs + randomDelay, reason: "minute_cap" };
-      }
-
-      return { delayMs: 0 };
-    } catch {
-      return { delayMs: 0, reason: "rate_limit_unavailable" };
-    }
+    // Rate-limit Redis removido: envio segue sem bloqueio.
+    void input;
+    return { delayMs: 0, reason: "rate_limit_disabled_without_redis" };
   }
 
   async markSent(companyId: string): Promise<void> {
-    try {
-      const redis = getRedisClient();
-      const dayKey = dayWindowKey(`rl:day:${companyId}`);
-      const count = await redis.incr(dayKey);
-      if (count === 1) {
-        await redis.expire(dayKey, 60 * 60 * 30);
-      }
-    } catch {
-      // Falha de Redis nao deve derrubar o fluxo de envio.
-    }
+    void companyId;
   }
 }
 

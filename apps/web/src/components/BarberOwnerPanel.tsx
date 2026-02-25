@@ -45,6 +45,7 @@ const HOUR_ROW_HEIGHT = 64;
 const DAY_START_MINUTES = DAY_START_HOUR * 60;
 const DAY_END_MINUTES = (DAY_END_HOUR + 1) * 60;
 const DAY_TIMELINE_HEIGHT = ((DAY_END_MINUTES - DAY_START_MINUTES) / 60) * HOUR_ROW_HEIGHT;
+const APPOINTMENT_DELETE_CONFIRM_TEXT = "confirmar exclusão";
 
 interface DayAppointmentLayout {
   appointment: BarberAppointment;
@@ -226,6 +227,14 @@ function formatDateTime(value: string): string {
   return date.toLocaleString("pt-BR");
 }
 
+function normalizeConfirmationInput(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
 function statusVariant(status: BarberAppointment["status"]): "default" | "secondary" | "destructive" {
   if (status === "completed") {
     return "default";
@@ -245,6 +254,14 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
   const isPersonResource = bookingSector === "barber" || bookingSector === "clinic";
   const labelResource = bookingSector === "car_wash" ? "Box/Vaga" : bookingSector === "clinic" ? "Profissional" : bookingSector === "generic" ? "Recurso" : "Barbeiro";
   const labelResources = bookingSector === "car_wash" ? "Boxes/Vagas" : bookingSector === "clinic" ? "Profissionais" : bookingSector === "generic" ? "Recursos" : "Barbeiros";
+  const bookingExample =
+    bookingSector === "car_wash"
+      ? "agendar lavagem completa 20/02/2026 14:30"
+      : bookingSector === "clinic"
+        ? "agendar consulta de rotina 20/02/2026 14:30"
+        : bookingSector === "generic"
+          ? "agendar servico padrao 20/02/2026 14:30"
+          : "agendar corte masculino 20/02/2026 14:30";
 
   let iconService = Scissors;
   if (bookingSector === "car_wash") iconService = CarFront;
@@ -398,7 +415,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
 
       void loadAppointmentsForDate(selectedDate);
     } catch (err) {
-      setFeedback(err instanceof Error ? err.message : "Falha ao carregar painel da barbearia");
+      setFeedback(err instanceof Error ? err.message : "Falha ao carregar painel de agendamentos");
     } finally {
       setLoading(false);
     }
@@ -530,10 +547,10 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
 
       await api.createBarber(token, payload);
       setNewBarber({ name: "", email: "", phone: "", active: true });
-      setFeedback("Barbeiro criado com sucesso.");
+      setFeedback("Recurso criado com sucesso.");
       await loadAll();
     } catch (err) {
-      setFeedback(err instanceof Error ? err.message : "Falha ao criar barbeiro");
+      setFeedback(err instanceof Error ? err.message : "Falha ao criar recurso");
     }
   }
 
@@ -548,22 +565,22 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
         phone: draft.phone || null,
         active: draft.active,
       });
-      setFeedback("Barbeiro atualizado.");
+      setFeedback("Recurso atualizado.");
       await loadAll();
     } catch (err) {
-      setFeedback(err instanceof Error ? err.message : "Falha ao atualizar barbeiro");
+      setFeedback(err instanceof Error ? err.message : "Falha ao atualizar recurso");
     }
   }
 
   async function removeBarber(barberId: string) {
-    if (!window.confirm("Deseja realmente desativar este barbeiro?")) return;
+    if (!window.confirm("Deseja realmente desativar este recurso?")) return;
     setFeedback("");
     try {
       await api.deleteBarber(token, barberId);
-      setFeedback("Barbeiro removido.");
+      setFeedback("Recurso removido.");
       await loadAll();
     } catch (err) {
-      setFeedback(err instanceof Error ? err.message : "Falha ao remover barbeiro");
+      setFeedback(err instanceof Error ? err.message : "Falha ao remover recurso");
     }
   }
 
@@ -661,6 +678,33 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
       await Promise.all([loadAll(), loadAppointmentsForDate(selectedDate)]);
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : "Falha ao atualizar agendamento");
+    }
+  }
+
+  async function deleteAppointmentPermanently(appointmentId: string) {
+    const typed = window.prompt(
+      `Para excluir permanentemente este agendamento, digite exatamente:\n${APPOINTMENT_DELETE_CONFIRM_TEXT}`,
+    );
+
+    if (typed === null) {
+      return;
+    }
+
+    if (normalizeConfirmationInput(typed) !== normalizeConfirmationInput(APPOINTMENT_DELETE_CONFIRM_TEXT)) {
+      setFeedback('Texto de confirmação inválido. Digite exatamente: "confirmar exclusão".');
+      return;
+    }
+
+    setFeedback("");
+    try {
+      await api.deleteBarberAppointment(token, appointmentId, { confirmation: typed });
+      setFeedback("Agendamento excluído permanentemente.");
+      if (selectedAppointmentId === appointmentId) {
+        setSelectedAppointmentId(null);
+      }
+      await Promise.all([loadAll(), loadAppointmentsForDate(selectedDate)]);
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : "Falha ao excluir agendamento");
     }
   }
 
@@ -1196,6 +1240,18 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                         </Button>
                       </div>
                     ) : null}
+
+                    <div className="mt-3 grid gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => void deleteAppointmentPermanently(selectedDayAppointment.id)}
+                      >
+                        <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                        Excluir agendamento
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <div className="rounded-xl border border-dashed border-border bg-muted/50 px-4 py-8 text-center text-sm text-muted-foreground">
@@ -1315,7 +1371,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
             <p>O agente entende comandos como: servicos, agenda, agendar e cancelar agendamento.</p>
-            <p>Exemplo para cliente: agendar corte masculino 20/02/2026 14:30.</p>
+            <p>Exemplo para cliente: {bookingExample}.</p>
             <p>Se o cliente enviar horario fora da grade, a IA solicita um novo horario automaticamente.</p>
           </CardContent>
         </Card>

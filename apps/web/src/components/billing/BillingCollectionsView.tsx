@@ -6,6 +6,7 @@ import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Search, ChevronLeft, ChevronRight, Download, Eye, Send, Settings, User, Copy } from "lucide-react";
 import { Input } from "../ui/Input";
+import { Select } from "../ui/Select";
 import { EmptyState } from "../ui/EmptyState";
 import { SkeletonDashboard } from "../ui/Skeleton";
 import { ToastContainer, useToast } from "../ui/Toast";
@@ -27,11 +28,101 @@ function formatDate(value: string): string {
   return new Date(value).toLocaleDateString("pt-BR");
 }
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MONTH_OPTIONS = [
+  { value: "1", label: "Janeiro" },
+  { value: "2", label: "Fevereiro" },
+  { value: "3", label: "Marco" },
+  { value: "4", label: "Abril" },
+  { value: "5", label: "Maio" },
+  { value: "6", label: "Junho" },
+  { value: "7", label: "Julho" },
+  { value: "8", label: "Agosto" },
+  { value: "9", label: "Setembro" },
+  { value: "10", label: "Outubro" },
+  { value: "11", label: "Novembro" },
+  { value: "12", label: "Dezembro" },
+] as const;
+
+function parseDateOnly(value: string | null | undefined): Date | null {
+  if (!value) {
+    return null;
+  }
+
+  const datePrefix = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (datePrefix) {
+    const year = Number(datePrefix[1]);
+    const month = Number(datePrefix[2]);
+    const day = Number(datePrefix[3]);
+    const parsed = new Date(year, month - 1, day);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+}
+
+function getDaysUntilDue(value: string): number | null {
+  const dueDate = parseDateOnly(value);
+  if (!dueDate) {
+    return null;
+  }
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.ceil((dueDate.getTime() - today.getTime()) / MS_PER_DAY);
+}
+
+function getDaysUntilDueLabel(value: string): string {
+  const diffDays = getDaysUntilDue(value);
+  if (diffDays === null) {
+    return "Sem vencimento";
+  }
+
+  if (diffDays > 0) {
+    return `${diffDays} dia(s) para vencer`;
+  }
+
+  if (diffDays === 0) {
+    return "Vence hoje";
+  }
+
+  return `Vencido ha ${Math.abs(diffDays)} dia(s)`;
+}
+
+function getDaysUntilDueClassName(value: string): string {
+  const diffDays = getDaysUntilDue(value);
+  if (diffDays === null) {
+    return "text-muted-foreground";
+  }
+
+  if (diffDays < 0) {
+    return "text-red-400";
+  }
+
+  if (diffDays === 0) {
+    return "text-amber-400";
+  }
+
+  if (diffDays <= 7) {
+    return "text-orange-400";
+  }
+
+  return "text-emerald-400";
+}
+
 export function BillingCollectionsView({ token }: BillingCollectionsViewProps) {
   const [clients, setClients] = useState<BillingClient[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<"pending" | "overdue" | "paid" | "clients">("pending");
+  const [monthFilter, setMonthFilter] = useState("all");
+  const [yearFilter, setYearFilter] = useState("all");
+  const [daysFilter, setDaysFilter] = useState<"all" | "today" | "up_to_7" | "up_to_15" | "up_to_30" | "over_30">("all");
   const [page, setPage] = useState(1);
   const [globalAutoSend, setGlobalAutoSend] = useState(false);
   const [sendingDocId, setSendingDocId] = useState<string | null>(null);
@@ -77,6 +168,18 @@ export function BillingCollectionsView({ token }: BillingCollectionsViewProps) {
     );
   }, [clients]);
 
+  const availableYears = useMemo<number[]>(() => {
+    const years = new Set<number>();
+    for (const doc of allDocuments) {
+      const dueDate = parseDateOnly(doc.dueDate);
+      if (dueDate) {
+        years.add(dueDate.getFullYear());
+      }
+    }
+
+    return Array.from(years).sort((a, b) => a - b);
+  }, [allDocuments]);
+
   const filteredDocuments = useMemo(() => {
     let result = allDocuments.filter((doc) => doc.status === tab);
 
@@ -90,8 +193,58 @@ export function BillingCollectionsView({ token }: BillingCollectionsViewProps) {
       );
     }
 
+    if (monthFilter !== "all" || yearFilter !== "all") {
+      result = result.filter((doc) => {
+        const dueDate = parseDateOnly(doc.dueDate);
+        if (!dueDate) {
+          return false;
+        }
+
+        if (monthFilter !== "all" && dueDate.getMonth() + 1 !== Number(monthFilter)) {
+          return false;
+        }
+
+        if (yearFilter !== "all" && dueDate.getFullYear() !== Number(yearFilter)) {
+          return false;
+        }
+
+        return true;
+      });
+    }
+
+    if (tab === "pending" && daysFilter !== "all") {
+      result = result.filter((doc) => {
+        const diffDays = getDaysUntilDue(doc.dueDate);
+        if (diffDays === null) {
+          return false;
+        }
+
+        if (daysFilter === "today") {
+          return diffDays === 0;
+        }
+
+        if (daysFilter === "up_to_7") {
+          return diffDays >= 0 && diffDays <= 7;
+        }
+
+        if (daysFilter === "up_to_15") {
+          return diffDays >= 0 && diffDays <= 15;
+        }
+
+        if (daysFilter === "up_to_30") {
+          return diffDays >= 0 && diffDays <= 30;
+        }
+
+        if (daysFilter === "over_30") {
+          return diffDays > 30;
+        }
+
+        return true;
+      });
+    }
+
     return result.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
-  }, [allDocuments, tab, search]);
+  }, [allDocuments, tab, search, monthFilter, yearFilter, daysFilter]);
 
   const filteredClients = useMemo(() => {
     let result = [...clients];
@@ -110,6 +263,8 @@ export function BillingCollectionsView({ token }: BillingCollectionsViewProps) {
     return result.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
   }, [clients, search]);
 
+  const documentsInCurrentTab = useMemo(() => allDocuments.filter((doc) => doc.status === tab).length, [allDocuments, tab]);
+
   const totalItems = tab === "clients" ? filteredClients.length : filteredDocuments.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
 
@@ -125,13 +280,19 @@ export function BillingCollectionsView({ token }: BillingCollectionsViewProps) {
 
   useEffect(() => {
     setPage(1);
-  }, [search, tab]);
+  }, [search, tab, monthFilter, yearFilter, daysFilter]);
 
   useEffect(() => {
     if (page > totalPages) {
       setPage(totalPages);
     }
   }, [page, totalPages]);
+
+  useEffect(() => {
+    if (tab !== "pending" && daysFilter !== "all") {
+      setDaysFilter("all");
+    }
+  }, [tab, daysFilter]);
 
   async function handleSendNotification(doc: BillingDocumentWithClient) {
     if (sendingDocId) {
@@ -225,9 +386,11 @@ export function BillingCollectionsView({ token }: BillingCollectionsViewProps) {
           <div>
             <h2 className="text-lg font-bold">Automacao de Lembretes</h2>
             <p className="text-sm text-muted-foreground">
-              O sistema pode enviar boletos e cobrancas automaticamente nos vencimentos quando ativado.
+              O sistema envia cobrancas automaticamente com 30, 15 e 7 dias de antecedencia do vencimento.
             </p>
-            <p className="text-xs text-muted-foreground/80">Modo teste: notificacoes enviadas para 5571983819052.</p>
+            <p className="text-xs text-muted-foreground/80">
+              Quando o cliente nao tiver telefone valido, o envio manual usa o numero de teste 5571983819052.
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -291,6 +454,66 @@ export function BillingCollectionsView({ token }: BillingCollectionsViewProps) {
           Clientes
         </button>
       </div>
+
+      {tab !== "clients" ? (
+        <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card/60 p-3">
+          <div className="min-w-[170px]">
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Mes</label>
+            <Select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} fullWidth={false} className="w-[170px]">
+              <option value="all">Todos os meses</option>
+              {MONTH_OPTIONS.map((month) => (
+                <option key={month.value} value={month.value}>
+                  {month.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div className="min-w-[140px]">
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ano</label>
+            <Select value={yearFilter} onChange={(e) => setYearFilter(e.target.value)} fullWidth={false} className="w-[140px]">
+              <option value="all">Todos</option>
+              {availableYears.map((year) => (
+                <option key={year} value={String(year)}>
+                  {year}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          {tab === "pending" ? (
+            <div className="min-w-[170px]">
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Dias para vencer</label>
+              <Select value={daysFilter} onChange={(e) => setDaysFilter(e.target.value as typeof daysFilter)} fullWidth={false} className="w-[170px]">
+                <option value="all">Todos prazos</option>
+                <option value="today">Vence hoje</option>
+                <option value="up_to_7">Ate 7 dias</option>
+                <option value="up_to_15">Ate 15 dias</option>
+                <option value="up_to_30">Ate 30 dias</option>
+                <option value="over_30">Mais de 30 dias</option>
+              </Select>
+            </div>
+          ) : null}
+
+          <div className="ml-auto flex items-center gap-2">
+            <span className="text-xs font-semibold text-muted-foreground">
+              {filteredDocuments.length} de {documentsInCurrentTab} titulo(s)
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setMonthFilter("all");
+                setYearFilter("all");
+                setDaysFilter("all");
+              }}
+              disabled={monthFilter === "all" && yearFilter === "all" && daysFilter === "all"}
+            >
+              Limpar filtros
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -377,6 +600,11 @@ export function BillingCollectionsView({ token }: BillingCollectionsViewProps) {
                     <span className="text-xs text-muted-foreground">
                       {tab === "paid" ? "Pago em:" : "Vencimento:"} {formatDate(doc.paidAt || doc.dueDate)}
                     </span>
+                    {tab !== "paid" ? (
+                      <span className={`text-xs font-semibold ${getDaysUntilDueClassName(doc.dueDate)}`}>
+                        Prazo: {getDaysUntilDueLabel(doc.dueDate)}
+                      </span>
+                    ) : null}
                   </div>
 
                   <div className="flex items-center gap-2 pt-2 md:pt-0 md:justify-end">

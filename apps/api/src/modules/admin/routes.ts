@@ -115,6 +115,10 @@ function normalizeSessionStatus(status: string | null | undefined): string {
   return cleaned.slice(0, 40);
 }
 
+function companyAiTypeRequiresDedicatedInstance(aiType: CompanyAiType): boolean {
+  return aiType === "barber_booking" || aiType === "billing";
+}
+
 function buildPhoneVariants(raw: string): string[] {
   const normalized = normalizePhone(raw);
   if (!normalized) {
@@ -303,8 +307,8 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
           return reply.code(400).send({ message: "Empresas no servico de NF-e devem usar CNPJ valido" });
         }
 
-        if (data.aiType === "barber_booking" && !requestedInstanceName) {
-          return reply.code(400).send({ message: "Informe o nome da instancia Evolution para empresas de barbearia" });
+        if (companyAiTypeRequiresDedicatedInstance(data.aiType) && !requestedInstanceName) {
+          return reply.code(400).send({ message: "Informe o nome da instancia Evolution para empresas de agendamento/cobranca" });
         }
 
         const existing = await prisma.company.findFirst({
@@ -337,7 +341,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
               cnpj: document.normalized,
               name: data.name,
               email: data.email,
-              evolutionInstanceName: data.aiType === "barber_booking" ? requestedInstanceName : null,
+              evolutionInstanceName: companyAiTypeRequiresDedicatedInstance(data.aiType) ? requestedInstanceName : null,
               aiType: data.aiType,
               bookingSector: data.bookingSector,
               active: data.active,
@@ -431,8 +435,8 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
               : data.evolutionInstanceName.trim() || null;
         const nextDocument = document?.normalized ?? company.cnpj;
 
-        if (nextAiType === "barber_booking" && !nextInstanceName) {
-          return reply.code(400).send({ message: "Informe o nome da instancia Evolution para empresas de barbearia" });
+        if (companyAiTypeRequiresDedicatedInstance(nextAiType) && !nextInstanceName) {
+          return reply.code(400).send({ message: "Informe o nome da instancia Evolution para empresas de agendamento/cobranca" });
         }
 
         if (nextAiType === "nfe_import" && nextDocument.length !== 14) {
@@ -460,7 +464,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
               cnpj: document?.normalized,
               name: data.name,
               email: data.email,
-              evolutionInstanceName: nextAiType === "barber_booking" ? nextInstanceName : null,
+              evolutionInstanceName: companyAiTypeRequiresDedicatedInstance(nextAiType) ? nextInstanceName : null,
               aiType: data.aiType,
               bookingSector: data.bookingSector,
               active: data.active,

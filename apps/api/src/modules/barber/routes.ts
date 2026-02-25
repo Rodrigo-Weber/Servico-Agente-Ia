@@ -123,6 +123,20 @@ const updateAppointmentSchema = z
     message: "Informe ao menos um campo para atualizar",
   });
 
+const permanentDeleteAppointmentSchema = z.object({
+  confirmation: z.string().trim().min(1),
+});
+
+const REQUIRED_APPOINTMENT_DELETE_CONFIRMATION = "confirmar exclusao";
+
+function normalizeConfirmationText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
 function toMinutes(value: string): number {
   const [hour, minute] = value.split(":").map((part) => Number(part));
   return hour * 60 + minute;
@@ -242,7 +256,7 @@ async function resolveAppointmentContext(input: {
   ]);
 
   if (!barber) {
-    throw new Error("Barbeiro nao encontrado ou inativo");
+    throw new Error("Recurso nao encontrado ou inativo");
   }
 
   if (!service) {
@@ -250,12 +264,12 @@ async function resolveAppointmentContext(input: {
   }
 
   if (service.barberId && service.barberId !== barber.id) {
-    throw new Error("Este servico nao pertence ao barbeiro selecionado");
+    throw new Error("Este servico nao pertence ao recurso selecionado");
   }
 
   const endsAt = new Date(input.startsAt.getTime() + service.durationMinutes * 60 * 1000);
   if (!isInsideWorkingWindow(input.startsAt, endsAt, windows)) {
-    throw new Error("Horario fora da grade de trabalho configurada para este barbeiro");
+    throw new Error("Horario fora da grade de trabalho configurada para este recurso");
   }
 
   const overlap = await prisma.barberAppointment.findFirst({
@@ -271,7 +285,7 @@ async function resolveAppointmentContext(input: {
   });
 
   if (overlap) {
-    throw new Error("Horario indisponivel para este barbeiro");
+    throw new Error("Horario indisponivel para este recurso");
   }
 
   return {
@@ -284,6 +298,52 @@ async function resolveAppointmentContext(input: {
 function normalizeAppointmentPhone(phone: string): string {
   const normalized = normalizePhone(phone);
   return normalized || phone.trim();
+}
+
+function buildPhoneVariants(raw: string): string[] {
+  const normalized = normalizePhone(raw);
+  if (!normalized) {
+    return [];
+  }
+
+  const variants = new Set<string>();
+  variants.add(normalized);
+
+  if (normalized.startsWith("55") && normalized.length > 11) {
+    variants.add(normalized.slice(2));
+  }
+
+  if (!normalized.startsWith("55") && (normalized.length === 10 || normalized.length === 11)) {
+    variants.add(`55${normalized}`);
+  }
+
+  if (normalized.length > 11) {
+    variants.add(normalized.slice(-11));
+  }
+
+  if (normalized.length > 10) {
+    variants.add(normalized.slice(-10));
+  }
+
+  return Array.from(variants);
+}
+
+async function findBookingCustomerByPhone(companyId: string, rawPhone: string): Promise<{ id: string } | null> {
+  const variants = buildPhoneVariants(rawPhone);
+  if (variants.length === 0) {
+    return null;
+  }
+
+  const customer = await prisma.bookingCustomer.findFirst({
+    where: {
+      companyId,
+      OR: variants.flatMap((value) => [{ phoneE164: value }, { phoneE164: { endsWith: value } }]),
+    },
+    select: { id: true },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  return customer;
 }
 
 function isConnectedStatus(status: string): boolean {
@@ -318,7 +378,7 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
 
         const allowed = await assertCompanyBarberService(companyId);
         if (!allowed) {
-          reply.code(403).send({ message: "Empresa sem acesso ao modulo de barbearia" });
+          reply.code(403).send({ message: "Empresa sem acesso ao modulo de agendamento" });
           return;
         }
 
@@ -330,7 +390,7 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
           });
 
           if (!scopeId) {
-            reply.code(403).send({ message: "Perfil de barbeiro nao encontrado para este usuario" });
+            reply.code(403).send({ message: "Perfil operacional nao encontrado para este usuario" });
             return;
           }
         }
@@ -794,7 +854,7 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
 
       barberApp.post("/barbers", async (request, reply) => {
         if (request.authUser?.role !== "company") {
-          return reply.code(403).send({ message: "Apenas a empresa pode cadastrar barbeiros" });
+          return reply.code(403).send({ message: "Apenas a empresa pode cadastrar recursos" });
         }
 
         const companyId = request.authUser.companyId;
@@ -822,7 +882,7 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
 
       barberApp.patch("/barbers/:id", async (request, reply) => {
         if (request.authUser?.role !== "company") {
-          return reply.code(403).send({ message: "Apenas a empresa pode editar barbeiros" });
+          return reply.code(403).send({ message: "Apenas a empresa pode editar recursos" });
         }
 
         const companyId = request.authUser.companyId;
@@ -841,7 +901,7 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
         });
 
         if (!barber) {
-          return reply.code(404).send({ message: "Barbeiro nao encontrado" });
+          return reply.code(404).send({ message: "Recurso nao encontrado" });
         }
 
         const updated = await prisma.barberProfile.update({
@@ -864,7 +924,7 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
 
       barberApp.delete("/barbers/:id", async (request, reply) => {
         if (request.authUser?.role !== "company") {
-          return reply.code(403).send({ message: "Apenas a empresa pode excluir barbeiros" });
+          return reply.code(403).send({ message: "Apenas a empresa pode excluir recursos" });
         }
 
         const companyId = request.authUser.companyId;
@@ -882,7 +942,7 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
         });
 
         if (!barber) {
-          return reply.code(404).send({ message: "Barbeiro nao encontrado" });
+          return reply.code(404).send({ message: "Recurso nao encontrado" });
         }
 
         try {
@@ -914,7 +974,7 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
           companyId,
         });
         if (barberProfileId && barberProfileId !== params.data.id) {
-          return reply.code(403).send({ message: "Acesso negado a este barbeiro" });
+          return reply.code(403).send({ message: "Acesso negado a este recurso" });
         }
 
         const barber = await prisma.barberProfile.findFirst({
@@ -926,7 +986,7 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
         });
 
         if (!barber) {
-          return reply.code(404).send({ message: "Barbeiro nao encontrado" });
+          return reply.code(404).send({ message: "Recurso nao encontrado" });
         }
 
         const hours = await prisma.barberWorkingHour.findMany({
@@ -961,7 +1021,7 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
         });
 
         if (!barber) {
-          return reply.code(404).send({ message: "Barbeiro nao encontrado" });
+          return reply.code(404).send({ message: "Recurso nao encontrado" });
         }
 
         await prisma.$transaction(async (tx) => {
@@ -1015,7 +1075,7 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
         if (barberProfileId) {
           serviceWhere.OR = [{ barberId: null }, { barberId: barberProfileId }];
           if (parsed.data.barberId && parsed.data.barberId !== barberProfileId) {
-            return reply.code(403).send({ message: "Acesso negado ao barbeiro informado" });
+            return reply.code(403).send({ message: "Acesso negado ao recurso informado" });
           }
         }
 
@@ -1060,7 +1120,7 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
             select: { id: true },
           });
           if (!barber) {
-            return reply.code(404).send({ message: "Barbeiro nao encontrado para vincular ao servico" });
+            return reply.code(404).send({ message: "Recurso nao encontrado para vincular ao servico" });
           }
         }
 
@@ -1109,7 +1169,7 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
             select: { id: true },
           });
           if (!barber) {
-            return reply.code(404).send({ message: "Barbeiro nao encontrado para vincular ao servico" });
+            return reply.code(404).send({ message: "Recurso nao encontrado para vincular ao servico" });
           }
         }
 
@@ -1180,7 +1240,7 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
           companyId,
         });
         if (barberProfileId && parsed.data.barberId && parsed.data.barberId !== barberProfileId) {
-          return reply.code(403).send({ message: "Acesso negado ao barbeiro informado" });
+          return reply.code(403).send({ message: "Acesso negado ao recurso informado" });
         }
 
         const appointments = await prisma.barberAppointment.findMany({
@@ -1238,7 +1298,7 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
           companyId,
         });
         if (barberProfileId && parsed.data.barberId !== barberProfileId) {
-          return reply.code(403).send({ message: "Acesso negado para agendar em outro barbeiro" });
+          return reply.code(403).send({ message: "Acesso negado para agendar em outro recurso" });
         }
 
         try {
@@ -1248,14 +1308,17 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
             serviceId: parsed.data.serviceId,
             startsAt,
           });
+          const clientPhone = normalizeAppointmentPhone(parsed.data.clientPhone);
+          const bookingCustomer = await findBookingCustomerByPhone(companyId, clientPhone);
 
           const appointment = await prisma.barberAppointment.create({
             data: {
               companyId,
+              bookingCustomerId: bookingCustomer?.id ?? null,
               barberId: context.barber.id,
               serviceId: context.service.id,
               clientName: parsed.data.clientName,
-              clientPhone: normalizeAppointmentPhone(parsed.data.clientPhone),
+              clientPhone,
               startsAt,
               endsAt: context.endsAt,
               status: "scheduled",
@@ -1325,7 +1388,7 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
             parsed.data.clientPhone !== undefined ||
             parsed.data.startsAt !== undefined;
           if (hasForbiddenChanges) {
-            return reply.code(403).send({ message: "Perfil barbeiro pode alterar apenas status e observacoes" });
+            return reply.code(403).send({ message: "Perfil operacional pode alterar apenas status e observacoes" });
           }
         }
 
@@ -1339,6 +1402,12 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
 
         try {
           let nextEndsAt: Date | undefined;
+          const nextClientPhone =
+            parsed.data.clientPhone === undefined ? appointment.clientPhone : normalizeAppointmentPhone(parsed.data.clientPhone);
+          const bookingCustomer =
+            parsed.data.clientPhone === undefined
+              ? null
+              : await findBookingCustomerByPhone(companyId, nextClientPhone);
 
           const needsScheduleValidation =
             parsed.data.barberId !== undefined ||
@@ -1363,8 +1432,8 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
               barberId: nextBarberId,
               serviceId: nextServiceId,
               clientName: parsed.data.clientName,
-              clientPhone:
-                parsed.data.clientPhone === undefined ? undefined : normalizeAppointmentPhone(parsed.data.clientPhone),
+              clientPhone: parsed.data.clientPhone === undefined ? undefined : nextClientPhone,
+              bookingCustomerId: parsed.data.clientPhone === undefined ? undefined : bookingCustomer?.id ?? null,
               startsAt: parsed.data.startsAt ? nextStartsAt : undefined,
               endsAt: nextEndsAt,
               status: parsed.data.status,
@@ -1425,6 +1494,47 @@ export async function barberRoutes(app: FastifyInstance): Promise<void> {
           data: {
             status: "canceled",
           },
+        });
+
+        return reply.code(204).send();
+      });
+
+      barberApp.delete("/appointments/:id/permanent", async (request, reply) => {
+        const companyId = request.authUser?.companyId;
+        const params = z.object({ id: z.string().min(1) }).safeParse(request.params);
+        const parsedBody = permanentDeleteAppointmentSchema.safeParse(request.body ?? {});
+        if (!companyId || !params.success || !parsedBody.success) {
+          return reply.code(400).send({ message: "Payload invalido" });
+        }
+
+        const normalizedConfirmation = normalizeConfirmationText(parsedBody.data.confirmation);
+        if (normalizedConfirmation !== REQUIRED_APPOINTMENT_DELETE_CONFIRMATION) {
+          return reply
+            .code(400)
+            .send({ message: "Confirmacao invalida. Digite exatamente: confirmar exclusao" });
+        }
+
+        const appointment = await prisma.barberAppointment.findFirst({
+          where: { id: params.data.id, companyId },
+          include: {
+            barber: {
+              select: {
+                userId: true,
+              },
+            },
+          },
+        });
+
+        if (!appointment) {
+          return reply.code(404).send({ message: "Agendamento nao encontrado" });
+        }
+
+        if (request.authUser?.role === "barber" && appointment.barber.userId !== request.authUser.id) {
+          return reply.code(403).send({ message: "Acesso negado para este agendamento" });
+        }
+
+        await prisma.barberAppointment.delete({
+          where: { id: appointment.id },
         });
 
         return reply.code(204).send();

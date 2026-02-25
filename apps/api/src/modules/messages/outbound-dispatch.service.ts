@@ -1,9 +1,7 @@
 import { MessageDispatchStatus, Prisma } from "@prisma/client";
-import { env } from "../../config/env.js";
 import { prisma } from "../../lib/prisma.js";
 import { evolutionService } from "../../services/evolution.service.js";
 import { dispatchRateLimiterService } from "./rate-limiter.service.js";
-import { enqueueOutboundDispatch } from "./queue.js";
 
 const BASE_RETRY_DELAY_MS = 15_000;
 const MAX_RETRY_DELAY_MS = 5 * 60 * 1000;
@@ -75,24 +73,7 @@ class OutboundDispatchService {
       select: { id: true },
     });
 
-    if (env.QUEUE_OUTBOUND_ENABLED) {
-      try {
-        await enqueueOutboundDispatch(dispatch.id);
-        return { dispatchId: dispatch.id };
-      } catch (error) {
-        const message = error instanceof Error ? truncateError(error.message) : "Fila indisponivel";
-        await prisma.messageDispatch.update({
-          where: { id: dispatch.id },
-          data: {
-            status: "failed",
-            errorCode: "queue_unavailable",
-            errorMessage: message,
-            nextAttemptAt: new Date(),
-          },
-        });
-      }
-    }
-
+    // Sem Redis/BullMQ: processamento direto e persistencia integral no banco.
     await this.processDispatch(dispatch.id);
     return { dispatchId: dispatch.id };
   }

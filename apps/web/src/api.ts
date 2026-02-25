@@ -674,8 +674,56 @@ export const api = {
     });
   },
 
+  deleteBarberAppointment(
+    token: string,
+    appointmentId: string,
+    payload: {
+      confirmation: string;
+    },
+  ) {
+    return request<void>(`/barber/appointments/${appointmentId}/permanent`, {
+      method: "DELETE",
+      token,
+      body: payload,
+    });
+  },
+
   getBillingDashboardSummary(token: string): Promise<BillingDashboardSummary> {
     return request<BillingDashboardSummary>("/billing/dashboard/summary", { token });
+  },
+
+  getBillingWhatsappSession(token: string) {
+    return request<{ session: { status: string } }>("/billing/whatsapp/session", { token });
+  },
+
+  startBillingWhatsappSession(token: string) {
+    return request<{
+      ok: boolean;
+      status: string;
+      qr?: string | null;
+      alreadyConnected: boolean;
+      message: string;
+    }>("/billing/whatsapp/session/connect", {
+      method: "POST",
+      token,
+      body: {},
+    });
+  },
+
+  disconnectBillingWhatsappSession(token: string) {
+    return request<{
+      ok: boolean;
+      status: string;
+      message: string;
+    }>("/billing/whatsapp/session/disconnect", {
+      method: "POST",
+      token,
+      body: {},
+    });
+  },
+
+  getBillingWhatsappQr(token: string) {
+    return request<{ qr: string | null; status: string; message: string | null }>("/billing/whatsapp/session/qrcode", { token });
   },
 
   getBillingClients(token: string): Promise<BillingClient[]> {
@@ -722,6 +770,37 @@ export const api = {
 
   getBillingMessages(token: string, phoneE164: string): Promise<BillingMessage[]> {
     return request<BillingMessage[]>(`/billing/crm/messages/${encodeURIComponent(phoneE164)}`, { token });
+  },
+
+  async downloadBillingMessageAttachment(token: string, messageId: string, fallbackName = "arquivo.bin"): Promise<void> {
+    const response = await fetch(`${API_URL}/billing/crm/message-attachments/${encodeURIComponent(messageId)}/download`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => ({}))) as ApiErrorPayload;
+      const message = payload.message || "Erro ao baixar anexo";
+
+      if (response.status === 401) {
+        emitUnauthorized("Sua sessao expirou. Entre novamente para continuar.");
+      }
+
+      throw new ApiError(message, response.status, payload);
+    }
+
+    const blob = await response.blob();
+    const fileName = resolveDownloadFilename(response.headers.get("content-disposition"), fallbackName);
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
   },
 
   deleteBillingConversation(token: string, phoneE164: string) {
@@ -772,6 +851,7 @@ export const api = {
         cnpj: string;
         email: string;
         active: boolean;
+        evolutionInstanceName: string | null;
       };
     }>("/billing/me", {
       token,

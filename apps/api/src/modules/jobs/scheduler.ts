@@ -1,10 +1,12 @@
 import cron, { ScheduledTask } from "node-cron";
 import { runHourlyNfeSync, runDailyImportSummaryJob } from "./hourly-sync.js";
+import { runBillingAdvanceRemindersJob } from "./billing-reminder.job.js";
 import { appConfigService } from "../../services/app-config.service.js";
 import { env } from "../../config/env.js";
 
 const HOURLY_SYNC_CRON = "1 * * * *";
 const DAILY_DIGEST_CRON = "0 0 18 * * *";
+const DAILY_BILLING_REMINDER_CRON = "0 0 9 * * *";
 const SCHEDULE_TIMEZONE = "America/Sao_Paulo";
 
 interface SchedulerOptions {
@@ -66,6 +68,20 @@ export async function startHourlyNfeScheduler(options: SchedulerOptions = {}): P
     },
   );
 
+  const billingReminderTask = cron.schedule(
+    DAILY_BILLING_REMINDER_CRON,
+    async () => {
+      try {
+        await runBillingAdvanceRemindersJob();
+      } catch (error) {
+        console.error(`${tag} falha nos lembretes de cobranca agendados`, error);
+      }
+    },
+    {
+      timezone: SCHEDULE_TIMEZONE,
+    },
+  );
+
   let syncMinIntervalSeconds = env.SYNC_MIN_INTERVAL_SECONDS;
   try {
     const settings = await appConfigService.getSettings();
@@ -76,7 +92,7 @@ export async function startHourlyNfeScheduler(options: SchedulerOptions = {}): P
   }
 
   console.log(
-    `${tag} agendadores iniciados (Sync: ${HOURLY_SYNC_CRON}, Resumo: ${DAILY_DIGEST_CRON} ${SCHEDULE_TIMEZONE})`,
+    `${tag} agendadores iniciados (Sync: ${HOURLY_SYNC_CRON}, Resumo: ${DAILY_DIGEST_CRON}, Cobranca: ${DAILY_BILLING_REMINDER_CRON} ${SCHEDULE_TIMEZONE})`,
   );
 
   if (runOnStart) {
@@ -87,5 +103,5 @@ export async function startHourlyNfeScheduler(options: SchedulerOptions = {}): P
     }
   }
 
-  return [syncTask, digestTask];
+  return [syncTask, digestTask, billingReminderTask];
 }

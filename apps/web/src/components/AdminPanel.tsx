@@ -1170,20 +1170,26 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                   <option value="barber_booking">Motor de Agendamentos (IA)</option>
                   <option value="billing">Cobranças e CRM</option>
                 </select>
-                {createForm.aiType === "barber_booking" ? (
+                {createForm.aiType === "barber_booking" || createForm.aiType === "billing" ? (
                   <>
-                    <select
-                      className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
-                      value={createForm.bookingSector}
-                      onChange={(e) => setCreateForm((prev) => ({ ...prev, bookingSector: e.target.value as any }))}
-                    >
-                      <option value="barber">Barbearias e Salões de Beleza</option>
-                      <option value="car_wash">Lava Jato e Estética Automotiva</option>
-                      <option value="clinic">Clínicas e Consultórios</option>
-                      <option value="generic">Agendamento Genérico</option>
-                    </select>
+                    {createForm.aiType === "barber_booking" ? (
+                      <select
+                        className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                        value={createForm.bookingSector}
+                        onChange={(e) => setCreateForm((prev) => ({ ...prev, bookingSector: e.target.value as any }))}
+                      >
+                        <option value="barber">Barbearias e Salões de Beleza</option>
+                        <option value="car_wash">Lava Jato e Estética Automotiva</option>
+                        <option value="clinic">Clínicas e Consultórios</option>
+                        <option value="generic">Agendamento Genérico</option>
+                      </select>
+                    ) : null}
                     <Input
-                      placeholder="Nome da instancia Evolution (ex: barbearia_matriz)"
+                      placeholder={
+                        createForm.aiType === "billing"
+                          ? "Nome da instancia Evolution (ex: cobranca_matriz)"
+                          : "Nome da instancia Evolution (ex: agendamento_matriz)"
+                      }
                       value={createForm.evolutionInstanceName}
                       onChange={(e) => setCreateForm((prev) => ({ ...prev, evolutionInstanceName: e.target.value }))}
                       required
@@ -1244,7 +1250,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                   <p className="mt-1 text-xs text-muted-foreground">
                     servico: {getServiceLabel(company.aiType)} | numeros: {company.whatsappNumbers.length}
                   </p>
-                  {company.aiType === "barber_booking" ? (
+                  {company.aiType === "barber_booking" || company.aiType === "billing" ? (
                     <p className="text-xs text-muted-foreground">instancia: {company.evolutionInstanceName || "nao configurada"}</p>
                   ) : null}
                 </button>
@@ -1274,18 +1280,20 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                       <option value="barber_booking">Motor de Agendamentos (IA)</option>
                       <option value="billing">Cobranças e CRM</option>
                     </select>
-                    {editForm.aiType === "barber_booking" ? (
+                    {editForm.aiType === "barber_booking" || editForm.aiType === "billing" ? (
                       <>
-                        <select
-                          className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
-                          value={editForm.bookingSector}
-                          onChange={(e) => setEditForm((prev) => ({ ...prev, bookingSector: e.target.value as any }))}
-                        >
-                          <option value="barber">Barbearias e Salões de Beleza</option>
-                          <option value="car_wash">Lava Jato e Estética Automotiva</option>
-                          <option value="clinic">Clínicas e Consultórios</option>
-                          <option value="generic">Agendamento Genérico</option>
-                        </select>
+                        {editForm.aiType === "barber_booking" ? (
+                          <select
+                            className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                            value={editForm.bookingSector}
+                            onChange={(e) => setEditForm((prev) => ({ ...prev, bookingSector: e.target.value as any }))}
+                          >
+                            <option value="barber">Barbearias e Salões de Beleza</option>
+                            <option value="car_wash">Lava Jato e Estética Automotiva</option>
+                            <option value="clinic">Clínicas e Consultórios</option>
+                            <option value="generic">Agendamento Genérico</option>
+                          </select>
+                        ) : null}
                         <Input
                           placeholder="Nome da instancia Evolution"
                           value={editForm.evolutionInstanceName}
@@ -1388,11 +1396,13 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                     </>
                   ) : (
                     <div className="rounded-xl border border-border bg-muted/50 p-3">
-                      <p className="text-sm font-semibold">Regra de atendimento da barbearia</p>
+                      <p className="text-sm font-semibold">
+                        {editForm.aiType === "billing" ? "Regra de atendimento da cobranca" : "Regra de atendimento do agendamento"}
+                      </p>
                       <p className="mt-1 text-sm text-muted-foreground">
                         Este servico responde qualquer numero que falar com a instancia configurada.
                         {selectedCompany.whatsappNumbers.length > 0
-                          ? ` Existem ${selectedCompany.whatsappNumbers.length} numero(s) autorizado(s) salvos, mas eles sao ignorados para barbearia.`
+                          ? ` Existem ${selectedCompany.whatsappNumbers.length} numero(s) autorizado(s) salvos, mas eles sao ignorados neste servico.`
                           : ""}
                       </p>
                     </div>
@@ -1438,7 +1448,9 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                   <p className="mt-1 text-xs text-muted-foreground">
                     {company.aiType === "barber_booking"
                       ? `Agenda: ${company._count?.appointments ?? 0}`
-                      : `NF-e: ${company._count?.nfeDocuments ?? 0}`}
+                      : company.aiType === "billing"
+                        ? "Cobranca/CRM ativo"
+                        : `NF-e: ${company._count?.nfeDocuments ?? 0}`}
                   </p>
                   <p className="text-[11px] text-muted-foreground">{getServiceLabel(company.aiType)}</p>
                 </div>

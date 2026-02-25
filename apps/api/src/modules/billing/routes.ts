@@ -1,13 +1,13 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import * as boletoUtils from "@mrmgomes/boleto-utils";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
 import { normalizePhone } from "../../lib/phone.js";
 import { evolutionService } from "../../services/evolution.service.js";
 import { authenticate, requireRole } from "../auth/guards.js";
+import { buildStoredMessagePreview, parseStoredMessageContent } from "../messages/message-content.js";
 import { outboundDispatchService } from "../messages/outbound-dispatch.service.js";
-import { generateBillingBoletoPdf } from "./boleto-pdf.service.js";
 import { importBillingCsvForCompany } from "./csv-import.service.js";
+import { BILLING_TEST_NOTIFICATION_PHONE, sendBillingDocumentNotification } from "./notification.service.js";
 
 interface BillingCompanyContext {
   id: string;
@@ -38,201 +38,32 @@ const importCsvSchema = z.object({
   documentosPath: z.string().trim().min(1).optional(),
 });
 
-const BILLING_TEST_NOTIFICATION_PHONE = "5571983819052";
-
-const BANK_NAMES_BY_CODE: Record<string, string> = {
-  "001": "Banco do Brasil",
-  "033": "Santander",
-  "041": "Banrisul",
-  "104": "Caixa Economica Federal",
-  "237": "Bradesco",
-  "341": "Itau",
-  "756": "Sicoob",
-};
-
-function formatMoney(value: number): string {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(value);
+function isConnectedStatus(status: string): boolean {
+  const normalized = status.toLowerCase();
+  return normalized.includes("open") || normalized.includes("connected");
 }
 
-function formatDate(value: Date): string {
-  return value.toLocaleDateString("pt-BR");
+function normalizeSessionStatus(status: string | null | undefined): string {
+  if (!status || typeof status !== "string") {
+    return "unknown";
+  }
+
+  const cleaned = status.trim().toLowerCase();
+  if (!cleaned) {
+    return "unknown";
+  }
+
+  return cleaned.slice(0, 40);
 }
 
-function digitsOnly(value: string | null | undefined): string {
-  return (value || "").replace(/\D/g, "");
-}
-
-function normalizePersonName(value: string): string {
-  const clean = value
-    .trim()
-    .replace(/\s+/g, " ")
-    .replace(/[^\p{L}\p{N}\s]/gu, "");
-
-  if (!clean) {
-    return "Cliente";
+function sanitizeDownloadFileName(fileName: string | null | undefined): string {
+  const raw = (fileName || "").trim();
+  if (!raw) {
+    return "arquivo.bin";
   }
 
-  return clean
-    .split(" ")
-    .filter(Boolean)
-    .map((token) => token.charAt(0).toUpperCase() + token.slice(1).toLowerCase())
-    .join(" ");
-}
-
-function truncateText(value: string, maxLength: number): string {
-  if (value.length <= maxLength) {
-    return value;
-  }
-
-  return `${value.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
-}
-
-function formatLinhaDigitavel(value: string): string {
-  const digits = digitsOnly(value);
-
-  if (digits.length === 47) {
-    return `${digits.slice(0, 5)}.${digits.slice(5, 10)} ${digits.slice(10, 15)}.${digits.slice(15, 21)} ${digits.slice(21, 26)}.${digits.slice(26, 32)} ${digits.slice(32, 33)} ${digits.slice(33)}`;
-  }
-
-  if (digits.length === 48) {
-    return `${digits.slice(0, 11)}-${digits.slice(11, 12)} ${digits.slice(12, 23)}-${digits.slice(23, 24)} ${digits.slice(24, 35)}-${digits.slice(35, 36)} ${digits.slice(36, 47)}-${digits.slice(47, 48)}`;
-  }
-
-  return value;
-}
-
-function safeValidateBoleto(code: string): {
-  linhaDigitavel?: string;
-  codigoBarras?: string;
-  sucesso?: boolean;
-} | null {
-  try {
-    const result = boletoUtils.validarBoleto(code) as {
-      linhaDigitavel?: string;
-      codigoBarras?: string;
-      sucesso?: boolean;
-    };
-
-    return result?.sucesso ? result : null;
-  } catch {
-    return null;
-  }
-}
-
-function resolveBoletoData(input: {
-  boletoLine: string | null;
-  barcode: string | null;
-}): {
-  linhaDigitavel: string | null;
-  codigoBarras: string | null;
-} {
-  let line = digitsOnly(input.boletoLine);
-  let barcode = digitsOnly(input.barcode);
-
-  const validatedFromLine = line ? safeValidateBoleto(line) : null;
-  const validated = validatedFromLine ?? (barcode ? safeValidateBoleto(barcode) : null);
-
-  if (validated) {
-    line = digitsOnly(validated.linhaDigitavel) || line;
-    barcode = digitsOnly(validated.codigoBarras) || barcode;
-  }
-
-  if (!line && barcode.length === 44) {
-    try {
-      line = digitsOnly(boletoUtils.codBarras2LinhaDigitavel(barcode, false));
-    } catch {
-      // fallback para manter apenas codigo de barras
-    }
-  }
-
-  if (!barcode && line.length >= 46) {
-    try {
-      barcode = digitsOnly(boletoUtils.linhaDigitavel2CodBarras(line));
-    } catch {
-      // fallback para manter apenas linha digitavel
-    }
-  }
-
-  return {
-    linhaDigitavel: line ? formatLinhaDigitavel(line) : null,
-    codigoBarras: barcode || null,
-  };
-}
-
-function resolveBankFromBoleto(input: { linhaDigitavel: string | null; codigoBarras: string | null }): {
-  code: string | null;
-  name: string | null;
-} {
-  const lineDigits = digitsOnly(input.linhaDigitavel);
-  const barcodeDigits = digitsOnly(input.codigoBarras);
-
-  let code: string | null = null;
-  if (lineDigits.length >= 3) {
-    code = lineDigits.slice(0, 3);
-  } else if (barcodeDigits.length === 44) {
-    code = barcodeDigits.slice(0, 3);
-  }
-
-  if (!code) {
-    return { code: null, name: null };
-  }
-
-  return {
-    code,
-    name: BANK_NAMES_BY_CODE[code] ?? `Banco ${code}`,
-  };
-}
-
-function buildNotificationMessage(input: {
-  supplierName: string;
-  description: string;
-  amount: number;
-  dueDate: Date;
-  linhaDigitavel: string | null;
-  codigoBarras: string | null;
-}): string {
-  const customerName = normalizePersonName(input.supplierName);
-  const firstName = customerName.split(/\s+/)[0] || "Cliente";
-  const bank = resolveBankFromBoleto({
-    linhaDigitavel: input.linhaDigitavel,
-    codigoBarras: input.codigoBarras,
-  });
-  const reference = truncateText(input.description, 90);
-
-  const lines = [
-    "📌 *AVISO DE COBRANCA*",
-    "",
-    `Olá, *${firstName}*.`,
-    "",
-    "Segue o boleto em PDF com os dados para pagamento:",
-    `• *Referência:* ${reference}`,
-    `• *Valor:* ${formatMoney(input.amount)}`,
-    `• *Vencimento:* ${formatDate(input.dueDate)}`,
-  ];
-
-  if (bank.name) {
-    lines.push(`• *Banco:* ${bank.name}${bank.code ? ` (${bank.code})` : ""}`);
-  }
-
-  if (input.linhaDigitavel) {
-    lines.push(`• *Linha digitável:* \`${input.linhaDigitavel}\``);
-  }
-
-  if (input.codigoBarras) {
-    lines.push(`• *Código de barras:* \`${input.codigoBarras}\``);
-  }
-
-  lines.push("");
-  lines.push("📎 *Boleto anexado nesta conversa.*");
-  lines.push("Se o pagamento já foi realizado, desconsidere esta mensagem.");
-  lines.push("Em caso de dúvida, responda este WhatsApp.");
-  lines.push("");
-  lines.push("*Departamento Financeiro*");
-
-  return lines.join("\n");
+  const safe = raw.replace(/[^A-Za-z0-9._-]/g, "_").replace(/_+/g, "_");
+  return safe.length > 0 ? safe : "arquivo.bin";
 }
 
 function buildPhoneVariants(raw: string): string[] {
@@ -334,6 +165,7 @@ export async function billingRoutes(app: FastifyInstance): Promise<void> {
             cnpj: true,
             email: true,
             active: true,
+            evolutionInstanceName: true,
           },
         });
 
@@ -342,6 +174,267 @@ export async function billingRoutes(app: FastifyInstance): Promise<void> {
         }
 
         return reply.send({ company });
+      });
+
+      billingApp.get("/whatsapp/session", async (request, reply) => {
+        const context = await getBillingCompanyContext(request, reply);
+        if (!context) {
+          return;
+        }
+
+        const instanceName = context.evolutionInstanceName?.trim() || null;
+        if (!instanceName) {
+          return reply.code(400).send({ message: "Instancia WhatsApp nao configurada pelo admin para esta empresa" });
+        }
+
+        const status = await evolutionService.getSessionStatus(instanceName);
+        const normalizedStatus = normalizeSessionStatus(status.status);
+
+        const session = await prisma.whatsappSession.upsert({
+          where: { sessionName: instanceName },
+          update: {
+            status: normalizedStatus,
+          },
+          create: {
+            sessionName: instanceName,
+            status: normalizedStatus,
+          },
+        });
+
+        return reply.send({ session, raw: status.raw });
+      });
+
+      const connectBillingWhatsappSessionHandler = async (request: FastifyRequest, reply: FastifyReply) => {
+        const context = await getBillingCompanyContext(request, reply);
+        if (!context) {
+          return;
+        }
+
+        const instanceName = context.evolutionInstanceName?.trim() || null;
+        if (!instanceName) {
+          return reply.code(400).send({ message: "Instancia WhatsApp nao configurada pelo admin para esta empresa" });
+        }
+
+        try {
+          const started = await evolutionService.startSession(instanceName);
+          const qrResult = await evolutionService.getQrCode(instanceName);
+          const status = normalizeSessionStatus(
+            qrResult.status && qrResult.status !== "unknown"
+              ? qrResult.status
+              : started.status || (qrResult.qr ? "qrcode" : "connecting"),
+          );
+          const connected = isConnectedStatus(status);
+
+          const session = await prisma.whatsappSession.upsert({
+            where: { sessionName: instanceName },
+            update: {
+              status,
+              qrLast: qrResult.qr,
+              connectedAt: connected ? new Date() : null,
+            },
+            create: {
+              sessionName: instanceName,
+              status,
+              qrLast: qrResult.qr,
+              connectedAt: connected ? new Date() : null,
+            },
+          });
+
+          const message = connected
+            ? "WhatsApp conectado com sucesso."
+            : session.qrLast
+              ? "Escaneie o QR code para concluir a conexao."
+              : "Sessao iniciada. Aguarde alguns segundos e atualize.";
+
+          return reply.send({
+            ok: true,
+            qr: session.qrLast,
+            status: session.status,
+            alreadyConnected: started.alreadyConnected,
+            message,
+            raw: {
+              start: started.raw,
+              qrcode: qrResult.raw,
+            },
+          });
+        } catch (error) {
+          const current = await evolutionService.getSessionStatus(instanceName);
+          const currentStatus = normalizeSessionStatus(current.status || "unknown");
+          const qrResult = await evolutionService.getQrCode(instanceName).catch(() => ({
+            qr: null as string | null,
+            raw: null as unknown,
+            status: currentStatus,
+          }));
+          const status = normalizeSessionStatus(
+            qrResult.status && qrResult.status !== "unknown" ? qrResult.status : currentStatus,
+          );
+          const connected = isConnectedStatus(status);
+
+          const session = await prisma.whatsappSession.upsert({
+            where: { sessionName: instanceName },
+            update: {
+              status,
+              qrLast: qrResult.qr,
+              connectedAt: connected ? new Date() : null,
+            },
+            create: {
+              sessionName: instanceName,
+              status,
+              qrLast: qrResult.qr,
+              connectedAt: connected ? new Date() : null,
+            },
+          });
+
+          if (connected || session.qrLast) {
+            return reply.send({
+              ok: true,
+              qr: session.qrLast,
+              status: session.status,
+              alreadyConnected: connected,
+              message: connected
+                ? "Sessao ja estava conectada."
+                : "Escaneie o QR code para concluir a conexao.",
+              raw: {
+                status: current.raw,
+                qrcode: qrResult.raw,
+              },
+            });
+          }
+
+          return reply.code(502).send({
+            message: "Falha ao iniciar sessao Evolution",
+            error: error instanceof Error ? error.message : "Erro desconhecido",
+          });
+        }
+      };
+
+      billingApp.post("/whatsapp/session/start", connectBillingWhatsappSessionHandler);
+      billingApp.post("/whatsapp/session/connect", connectBillingWhatsappSessionHandler);
+
+      billingApp.post("/whatsapp/session/disconnect", async (request, reply) => {
+        const context = await getBillingCompanyContext(request, reply);
+        if (!context) {
+          return;
+        }
+
+        const instanceName = context.evolutionInstanceName?.trim() || null;
+        if (!instanceName) {
+          return reply.code(400).send({ message: "Instancia WhatsApp nao configurada pelo admin para esta empresa" });
+        }
+
+        try {
+          const disconnected = await evolutionService.disconnectSession(instanceName);
+          const current = await evolutionService.getSessionStatus(instanceName).catch(() => disconnected);
+          const status = normalizeSessionStatus(current.status || disconnected.status || "unknown");
+          const connected = isConnectedStatus(status);
+
+          const session = await prisma.whatsappSession.upsert({
+            where: { sessionName: instanceName },
+            update: {
+              status,
+              qrLast: connected ? undefined : null,
+              connectedAt: connected ? new Date() : null,
+            },
+            create: {
+              sessionName: instanceName,
+              status,
+              qrLast: connected ? null : null,
+              connectedAt: connected ? new Date() : null,
+            },
+          });
+
+          return reply.send({
+            ok: !connected,
+            status: session.status,
+            message: connected
+              ? "A API informou sessao ainda conectada. Tente novamente em alguns segundos."
+              : "WhatsApp desconectado com sucesso.",
+            raw: {
+              disconnect: disconnected.raw,
+              status: current.raw,
+            },
+          });
+        } catch (error) {
+          return reply.code(502).send({
+            message: "Falha ao desconectar sessao Evolution",
+            error: error instanceof Error ? error.message : "Erro desconhecido",
+          });
+        }
+      });
+
+      billingApp.get("/whatsapp/session/qrcode", async (request, reply) => {
+        const context = await getBillingCompanyContext(request, reply);
+        if (!context) {
+          return;
+        }
+
+        const instanceName = context.evolutionInstanceName?.trim() || null;
+        if (!instanceName) {
+          return reply.code(400).send({ message: "Instancia WhatsApp nao configurada pelo admin para esta empresa" });
+        }
+
+        try {
+          const qrResult = await evolutionService.getQrCode(instanceName);
+          const status = normalizeSessionStatus(
+            qrResult.status && qrResult.status !== "unknown" ? qrResult.status : qrResult.qr ? "qrcode" : "unknown",
+          );
+          const connected = isConnectedStatus(status);
+
+          const session = await prisma.whatsappSession.upsert({
+            where: { sessionName: instanceName },
+            update: {
+              status,
+              qrLast: qrResult.qr,
+              connectedAt: connected ? new Date() : null,
+            },
+            create: {
+              sessionName: instanceName,
+              status,
+              qrLast: qrResult.qr,
+              connectedAt: connected ? new Date() : null,
+            },
+          });
+
+          const message = !session.qrLast
+            ? connected
+              ? "Sessao ja conectada. Nao ha QR code ativo."
+              : "Sem QR code ativo. Clique em Conectar WhatsApp."
+            : null;
+
+          return reply.send({
+            qr: session.qrLast,
+            status: session.status,
+            message,
+            raw: qrResult.raw,
+          });
+        } catch (error) {
+          const current = await evolutionService.getSessionStatus(instanceName);
+          const status = normalizeSessionStatus(current.status || "unknown");
+          const connected = isConnectedStatus(status);
+
+          const session = await prisma.whatsappSession.upsert({
+            where: { sessionName: instanceName },
+            update: {
+              status,
+              connectedAt: connected ? new Date() : null,
+            },
+            create: {
+              sessionName: instanceName,
+              status,
+              connectedAt: connected ? new Date() : null,
+            },
+          });
+
+          return reply.send({
+            qr: session.qrLast,
+            status: session.status,
+            message: connected
+              ? "Sessao conectada. QR code nao necessario."
+              : "Nao foi possivel obter QR code agora. Verifique configuracao do Evolution e tente novamente.",
+            raw: current.raw,
+            error: error instanceof Error ? error.message : "Erro desconhecido",
+          });
+        }
       });
 
       billingApp.get("/dashboard/summary", async (request, reply) => {
@@ -544,96 +637,36 @@ export async function billingRoutes(app: FastifyInstance): Promise<void> {
           return reply.code(404).send({ message: "Documento nao encontrado" });
         }
 
-        const targetPhone = BILLING_TEST_NOTIFICATION_PHONE;
-
-        const boletoData = resolveBoletoData({
-          boletoLine: document.boletoLine,
-          barcode: document.barcode,
-        });
-
-        const message = buildNotificationMessage({
-          supplierName: document.supplier.name,
-          description: document.description,
-          amount: Number(document.amount),
-          dueDate: document.dueDate,
-          linhaDigitavel: boletoData.linhaDigitavel,
-          codigoBarras: boletoData.codigoBarras,
-        });
-
-        const outLog = await prisma.messageLog.create({
-          data: {
-            companyId: context.id,
-            phoneE164: targetPhone,
-            direction: "out",
-            messageType: "media",
-            intent: "billing_notify",
-            content: message,
-            status: "received",
-          },
-          select: {
-            id: true,
-          },
-        });
-
-        const dueDateTag = [
-          document.dueDate.getFullYear(),
-          String(document.dueDate.getMonth() + 1).padStart(2, "0"),
-          String(document.dueDate.getDate()).padStart(2, "0"),
-        ].join("");
-
-        const boletoPdf = await generateBillingBoletoPdf({
-          documentId: document.id,
-          supplierName: document.supplier.name,
-          description: document.description,
-          amount: Number(document.amount),
-          dueDate: document.dueDate,
-          linhaDigitavel: boletoData.linhaDigitavel,
-          codigoBarras: boletoData.codigoBarras,
-        });
+        const supplierPhone = normalizePhone(document.supplier.phoneE164 || "");
+        const targetPhone = supplierPhone ?? BILLING_TEST_NOTIFICATION_PHONE;
+        const fallbackPhoneUsed = !supplierPhone;
 
         try {
-          await evolutionService.sendDocument(
+          const result = await sendBillingDocumentNotification({
+            companyId: context.id,
+            evolutionInstanceName: context.evolutionInstanceName,
+            documentId: document.id,
+            supplierName: document.supplier.name,
+            description: document.description,
+            amount: Number(document.amount),
+            dueDate: document.dueDate,
+            boletoLine: document.boletoLine,
+            barcode: document.barcode,
             targetPhone,
-            {
-              base64: Buffer.from(boletoPdf).toString("base64"),
-              fileName: `boleto-${document.id}-${dueDateTag}.pdf`,
-              mimeType: "application/pdf",
-              caption: message,
-            },
-            context.evolutionInstanceName ?? undefined,
-          );
+            intent: "billing_notify",
+          });
 
-          await prisma.messageLog.update({
-            where: { id: outLog.id },
-            data: { status: "processed" },
+          return reply.send({
+            ok: true,
+            phone: result.phone,
+            fallbackPhoneUsed,
+            message: result.message,
+            mediaType: result.mediaType,
           });
         } catch (error) {
-          await prisma.messageLog.update({
-            where: { id: outLog.id },
-            data: { status: "failed" },
-          });
-
           const errMessage = error instanceof Error ? error.message : "Falha ao enviar boleto em PDF";
           return reply.code(502).send({ message: errMessage });
         }
-
-        await prisma.billingDocument.update({
-          where: { id: document.id },
-          data: {
-            notificationCount: {
-              increment: 1,
-            },
-            notificationLastAt: new Date(),
-          },
-        });
-
-        return reply.send({
-          ok: true,
-          phone: targetPhone,
-          fallbackPhoneUsed: false,
-          message,
-          mediaType: "application/pdf",
-        });
       });
 
       billingApp.get("/crm/conversations", async (request, reply) => {
@@ -650,6 +683,7 @@ export async function billingRoutes(app: FastifyInstance): Promise<void> {
             select: {
               phoneE164: true,
               content: true,
+              messageType: true,
               createdAt: true,
             },
           }),
@@ -698,7 +732,10 @@ export async function billingRoutes(app: FastifyInstance): Promise<void> {
               id: phone,
               phoneE164: phone,
               userName: memory?.userName || supplierNameByPhone.get(phone) || null,
-              lastMessage: latest?.content || "Sem mensagens ainda",
+              lastMessage:
+                latest
+                  ? buildStoredMessagePreview({ content: latest.content, messageType: latest.messageType })
+                  : "Sem mensagens ainda",
               lastActivityAt: (memory?.lastActivityAt || latest?.createdAt || new Date(0)).toISOString(),
             };
           })
@@ -733,6 +770,7 @@ export async function billingRoutes(app: FastifyInstance): Promise<void> {
           select: {
             id: true,
             direction: true,
+            messageType: true,
             content: true,
             createdAt: true,
             status: true,
@@ -740,14 +778,74 @@ export async function billingRoutes(app: FastifyInstance): Promise<void> {
         });
 
         return reply.send(
-          messages.map((message) => ({
-            id: message.id,
-            direction: message.direction,
-            content: message.content,
-            createdAt: message.createdAt.toISOString(),
-            status: message.status,
-          })),
+          messages.map((message) => {
+            const parsed = parseStoredMessageContent(message.content);
+            return {
+              id: message.id,
+              direction: message.direction,
+              messageType: message.messageType,
+              content: parsed.text,
+              attachment: parsed.attachment
+                ? {
+                    available: Boolean(parsed.attachment.base64),
+                    fileName: parsed.attachment.fileName,
+                    mimeType: parsed.attachment.mimeType,
+                    mediaType: parsed.attachment.mediaType,
+                  }
+                : null,
+              createdAt: message.createdAt.toISOString(),
+              status: message.status,
+            };
+          }),
         );
+      });
+
+      billingApp.get("/crm/message-attachments/:id/download", async (request, reply) => {
+        const context = await getBillingCompanyContext(request, reply);
+        if (!context) {
+          return;
+        }
+
+        const params = z.object({ id: z.string().min(1) }).safeParse(request.params);
+        if (!params.success) {
+          return reply.code(400).send({ message: "Parametro invalido" });
+        }
+
+        const message = await prisma.messageLog.findFirst({
+          where: {
+            id: params.data.id,
+            companyId: context.id,
+          },
+          select: {
+            id: true,
+            messageType: true,
+            content: true,
+          },
+        });
+
+        if (!message) {
+          return reply.code(404).send({ message: "Mensagem nao encontrada" });
+        }
+
+        const parsed = parseStoredMessageContent(message.content);
+        if (!parsed.attachment?.base64) {
+          return reply.code(404).send({ message: "Mensagem sem anexo disponivel para download" });
+        }
+
+        let buffer: Buffer;
+        try {
+          buffer = Buffer.from(parsed.attachment.base64, "base64");
+        } catch {
+          return reply.code(422).send({ message: "Anexo invalido" });
+        }
+
+        const mimeType = parsed.attachment.mimeType || "application/octet-stream";
+        const fileName = sanitizeDownloadFileName(parsed.attachment.fileName);
+
+        reply.header("Content-Type", mimeType);
+        reply.header("Content-Disposition", `attachment; filename=\"${fileName}\"`);
+        reply.header("Cache-Control", "no-store");
+        return reply.send(buffer);
       });
 
       billingApp.delete("/crm/conversations/:phone", async (request, reply) => {
@@ -822,6 +920,7 @@ export async function billingRoutes(app: FastifyInstance): Promise<void> {
           select: {
             id: true,
             direction: true,
+            messageType: true,
             content: true,
             createdAt: true,
             status: true,
@@ -840,7 +939,9 @@ export async function billingRoutes(app: FastifyInstance): Promise<void> {
         return reply.send({
           id: outLog.id,
           direction: outLog.direction,
+          messageType: outLog.messageType,
           content: outLog.content,
+          attachment: null,
           createdAt: outLog.createdAt.toISOString(),
           status: outLog.status,
         });

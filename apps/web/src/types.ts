@@ -360,7 +360,14 @@ export interface BillingConversation {
 export interface BillingMessage {
   id: string;
   direction: "in" | "out";
+  messageType: "text" | "media" | "system";
   content: string;
+  attachment?: {
+    available: boolean;
+    fileName: string | null;
+    mimeType: string | null;
+    mediaType: string | null;
+  } | null;
   createdAt: string;
   status?: string;
 }

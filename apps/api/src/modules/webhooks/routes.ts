@@ -8,6 +8,8 @@ import { aiService, type AgentConversationMessage } from "../../services/ai.serv
 import { evolutionService } from "../../services/evolution.service.js";
 import { importNfeXml } from "../../services/nfe-import.service.js";
 import { appConfigService } from "../../services/app-config.service.js";
+import { generateBookingReceiptPdf } from "../barber/receipt-pdf.service.js";
+import { buildStoredMessageContent } from "../messages/message-content.js";
 import { outboundDispatchService } from "../messages/outbound-dispatch.service.js";
 
 interface IncomingData {
@@ -18,6 +20,8 @@ interface IncomingData {
   hasMedia: boolean;
   xmlContent: string | null;
   mediaUrl: string | null;
+  mediaFileName: string | null;
+  mediaMimeType: string | null;
   rawMessage: Record<string, unknown> | null;
   fromMe: boolean;
   messageType: "text" | "media";
@@ -345,7 +349,7 @@ function extractIncomingPayload(body: unknown): IncomingData {
     reportedType.includes("video") ||
     reportedType.includes("audio");
 
-  const fileName = String(
+  const fileNameRaw = String(
     documentMessage?.fileName ??
       firstMessage?.fileName ??
       source.fileName ??
@@ -355,8 +359,9 @@ function extractIncomingPayload(body: unknown): IncomingData {
       data.file ??
       root.file ??
       "",
-  ).toLowerCase();
-  const mimeType = String(
+  );
+  const fileName = fileNameRaw.toLowerCase();
+  const mimeTypeRaw = String(
     documentMessage?.mimetype ??
       firstMessage?.mimetype ??
       source.mimetype ??
@@ -366,7 +371,8 @@ function extractIncomingPayload(body: unknown): IncomingData {
       data.mimeType ??
       root.mimeType ??
       "",
-  ).toLowerCase();
+  );
+  const mimeType = mimeTypeRaw.toLowerCase();
 
   const mediaUrlCandidates = [
     asText(documentMessage?.url),
@@ -431,6 +437,8 @@ function extractIncomingPayload(body: unknown): IncomingData {
     hasMedia,
     xmlContent,
     mediaUrl,
+    mediaFileName: fileNameRaw.trim() || null,
+    mediaMimeType: mimeTypeRaw.trim() || null,
     rawMessage,
     fromMe,
     messageType: hasMedia ? "media" : "text",
@@ -505,7 +513,9 @@ async function findCompanyByInstance(instanceName: string) {
   const companies = await prisma.company.findMany({
     where: {
       active: true,
-      aiType: "barber_booking",
+      aiType: {
+        in: ["barber_booking", "billing"],
+      },
       evolutionInstanceName: {
         not: null,
       },
@@ -539,13 +549,41 @@ function formatCurrency(value: number): string {
   }).format(value);
 }
 
-type BarberIntent = "listar_servicos" | "agendar" | "cancelar" | "agenda" | "ajuda";
+type BarberIntent = "listar_servicos" | "agendar" | "cancelar" | "agenda" | "recibo" | "fidelidade" | "ajuda";
+type BillingAgentIntent = "crm_inbound" | "billing_profile" | "billing_documents" | "billing_help";
 type PendingBarberField = "nome" | "servico" | "horario";
+type PendingCustomerField = "nome" | "documento";
+
+interface BarberDateParts {
+  year: number;
+  month: number;
+  day: number;
+}
+
+interface BarberTimeParts {
+  hour: number;
+  minute: number;
+}
+
+interface OutgoingAttachment {
+  fileName: string;
+  mimeType: string;
+  mediaType: "document";
+  base64: string;
+}
+
+interface BarberConversationReply {
+  intent: BarberIntent;
+  text: string;
+  attachment?: OutgoingAttachment;
+}
 
 interface BarberTriageState {
   clientName: string | null;
+  clientDocument: string | null;
   serviceId: string | null;
   startsAtIso: string | null;
+  lastIntent: BarberIntent | null;
 }
 
 interface ConversationMessageMemory {
@@ -590,6 +628,7 @@ interface ConversationContextPayload {
   barber?: {
     triage?: {
       clientName: string | null;
+      clientDocument: string | null;
       serviceId: string | null;
       startsAtIso: string | null;
       updatedAtIso: string;
@@ -604,6 +643,8 @@ const NFE_CONTEXT_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_CONVERSATION_MESSAGES = 20;
 const MAX_NFE_LISTED_NOTES = 10;
 const MAX_NFE_PRODUCT_LINES = 10;
+const CLIENT_CANCELLATION_MIN_LEAD_MS = 60 * 60 * 1000;
+const BOOKING_LOYALTY_GOAL = 10;
 
 function parseConversationContext(raw: unknown): ConversationContextPayload {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -624,6 +665,7 @@ function parseConversationContext(raw: unknown): ConversationContextPayload {
     triageRaw
       ? {
           clientName: typeof triageRaw.clientName === "string" ? triageRaw.clientName : null,
+          clientDocument: typeof triageRaw.clientDocument === "string" ? triageRaw.clientDocument : null,
           serviceId: typeof triageRaw.serviceId === "string" ? triageRaw.serviceId : null,
           startsAtIso: typeof triageRaw.startsAtIso === "string" ? triageRaw.startsAtIso : null,
           updatedAtIso: typeof triageRaw.updatedAtIso === "string" ? triageRaw.updatedAtIso : new Date(0).toISOString(),
@@ -813,13 +855,24 @@ async function getBarberTriageState(companyId: string, phone: string): Promise<B
     select: {
       contextJson: true,
       userName: true,
+      lastIntent: true,
     },
   });
 
   const context = parseConversationContext(memory?.contextJson);
   const triage = context.barber?.triage;
   if (!triage) {
-    return null;
+    if (!memory?.userName) {
+      return null;
+    }
+
+    return {
+      clientName: memory.userName,
+      clientDocument: null,
+      serviceId: null,
+      startsAtIso: null,
+      lastIntent: null,
+    };
   }
 
   const updatedAt = new Date(triage.updatedAtIso);
@@ -830,15 +883,57 @@ async function getBarberTriageState(companyId: string, phone: string): Promise<B
 
   return {
     clientName: triage.clientName ?? memory?.userName ?? null,
+    clientDocument: triage.clientDocument ?? null,
     serviceId: triage.serviceId,
     startsAtIso: triage.startsAtIso,
+    lastIntent:
+      memory?.lastIntent === "agendar" ||
+      memory?.lastIntent === "recibo" ||
+      memory?.lastIntent === "fidelidade"
+        ? memory.lastIntent
+        : null,
   };
+}
+
+async function rememberConversationUserName(input: {
+  companyId: string;
+  phone: string;
+  userName: string;
+}): Promise<void> {
+  const normalizedName = normalizeClientName(input.userName);
+  if (!normalizedName) {
+    return;
+  }
+
+  await withConversationMemory(input.companyId, input.phone, (context) => {
+    const triage = context.barber?.triage;
+    const nextContext: ConversationContextPayload = {
+      ...context,
+      barber: {
+        ...context.barber,
+        triage: triage
+          ? {
+              ...triage,
+              clientName: normalizedName,
+              updatedAtIso: new Date().toISOString(),
+            }
+          : undefined,
+      },
+    };
+
+    return {
+      context: nextContext,
+      userName: normalizedName,
+      lastActivityAt: new Date(),
+    };
+  });
 }
 
 async function upsertBarberTriageState(input: {
   companyId: string;
   phone: string;
   clientName?: string | null;
+  clientDocument?: string | null;
   serviceId?: string | null;
   startsAtIso?: string | null;
   lastIntent?: string;
@@ -846,6 +941,8 @@ async function upsertBarberTriageState(input: {
   await withConversationMemory(input.companyId, input.phone, (context) => {
     const currentTriage = context.barber?.triage;
     const nextClientName = input.clientName === undefined ? currentTriage?.clientName ?? null : input.clientName;
+    const nextClientDocument =
+      input.clientDocument === undefined ? currentTriage?.clientDocument ?? null : input.clientDocument;
     const nextServiceId = input.serviceId === undefined ? currentTriage?.serviceId ?? null : input.serviceId;
     const nextStartsAtIso = input.startsAtIso === undefined ? currentTriage?.startsAtIso ?? null : input.startsAtIso;
 
@@ -856,6 +953,7 @@ async function upsertBarberTriageState(input: {
           ...context.barber,
           triage: {
             clientName: nextClientName,
+            clientDocument: nextClientDocument,
             serviceId: nextServiceId,
             startsAtIso: nextStartsAtIso,
             updatedAtIso: new Date().toISOString(),
@@ -1536,6 +1634,33 @@ function readNumberArg(
   return normalized;
 }
 
+function readOptionalNumberArg(
+  args: Record<string, unknown>,
+  key: string,
+  options: { min: number; max: number },
+): number | null {
+  const value = args[key];
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  const normalized = Math.trunc(parsed);
+  if (normalized < options.min) {
+    return options.min;
+  }
+
+  if (normalized > options.max) {
+    return options.max;
+  }
+
+  return normalized;
+}
+
 function readBooleanArg(args: Record<string, unknown>, key: string, defaultValue = false): boolean {
   const value = args[key];
   if (typeof value === "boolean") {
@@ -1555,7 +1680,7 @@ function readBooleanArg(args: Record<string, unknown>, key: string, defaultValue
   return defaultValue;
 }
 
-function buildNfeAgentConversationHistory(context: ConversationContextPayload, currentUserMessage: string): AgentConversationMessage[] {
+function buildAgentConversationHistory(context: ConversationContextPayload, currentUserMessage: string): AgentConversationMessage[] {
   const raw = Array.isArray(context.recentMessages) ? context.recentMessages : [];
   const history: AgentConversationMessage[] = raw
     .filter((item) => item.role === "user" || item.role === "assistant")
@@ -1595,7 +1720,7 @@ async function handleNfeToolAgentConversation(input: {
   });
 
   const context = parseConversationContext(memory?.contextJson);
-  const history = buildNfeAgentConversationHistory(context, input.userMessage);
+  const history = buildAgentConversationHistory(context, input.userMessage);
 
   const result = await aiService.runToolAgent({
     companyId: input.companyId,
@@ -1870,6 +1995,495 @@ async function handleNfeToolAgentConversation(input: {
   return result.text;
 }
 
+async function handleBarberToolAgentConversation(input: {
+  companyId: string;
+  incoming: IncomingData;
+  replyPhone: string;
+}): Promise<BarberConversationReply> {
+  const userMessage = (input.incoming.text || "").trim() || "Solicitacao de agendamento via WhatsApp";
+  const memory = await prisma.conversationMemory.findUnique({
+    where: {
+      companyId_phoneE164: {
+        companyId: input.companyId,
+        phoneE164: input.replyPhone,
+      },
+    },
+    select: {
+      contextJson: true,
+    },
+  });
+
+  const context = parseConversationContext(memory?.contextJson);
+  const history = buildAgentConversationHistory(context, userMessage);
+  let operationResult: BarberConversationReply | null = null;
+
+  await aiService.runToolAgent({
+    companyId: input.companyId,
+    userMessage,
+    conversationHistory: history,
+    systemInstruction: [
+      "Voce e um agente operacional de agendamento conectado a ferramentas reais.",
+      "Para responder o cliente, execute SEMPRE a ferramenta booking_handle_request.",
+      "Nao invente servicos, horarios, disponibilidade ou cadastro.",
+      "Use booking_get_capabilities apenas para explicar o que o sistema faz.",
+      "Se o cliente pedir cancelamento, aplique as regras reais de antecedencia do sistema.",
+    ].join("\n"),
+    tools: [
+      {
+        name: "booking_handle_request",
+        description:
+          "Executa o fluxo completo de agendamento/agenda/cancelamento/recibo/fidelidade para a mensagem atual do cliente.",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        execute: async () => {
+          if (!operationResult) {
+            operationResult = await handleBarberConversation({
+              companyId: input.companyId,
+              incoming: input.incoming,
+              replyPhone: input.replyPhone,
+            });
+          }
+
+          return toCompactJson({
+            intent: operationResult.intent,
+            text: operationResult.text,
+            hasAttachment: Boolean(operationResult.attachment),
+          });
+        },
+      },
+      {
+        name: "booking_get_capabilities",
+        description: "Retorna as capacidades reais do atendimento de agendamento.",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        execute: async () =>
+          toCompactJson({
+            capacidades: [
+              "listar servicos ativos",
+              "agendar horario",
+              "consultar agenda do cliente",
+              "cancelar com politica de antecedencia",
+              "emitir recibo de atendimento concluido",
+              "consultar fidelidade do cliente",
+            ],
+            comandosExemplo: ["servicos", "agendar", "agenda", "cancelar", "recibo", "fidelidade"],
+          }),
+      },
+    ],
+    maxSteps: 4,
+  });
+
+  if (operationResult) {
+    return operationResult;
+  }
+
+  return handleBarberConversation({
+    companyId: input.companyId,
+    incoming: input.incoming,
+    replyPhone: input.replyPhone,
+  });
+}
+
+async function buildBillingFallbackReply(input: {
+  companyId: string;
+  phoneCandidates: string[];
+  hasMedia: boolean;
+}): Promise<{ intent: BillingAgentIntent; text: string }> {
+  const supplier = await findBillingSupplierByPhone(input.companyId, input.phoneCandidates);
+  if (!supplier) {
+    const lines = [
+      "Recebi sua mensagem no atendimento financeiro.",
+      input.hasMedia ? "Arquivo recebido no CRM com sucesso." : "",
+      "Nao consegui localizar seu cadastro por este numero.",
+      "Me informe CPF/CNPJ ou razao social para eu localizar seus documentos.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    return {
+      intent: "billing_help",
+      text: lines,
+    };
+  }
+
+  const [pendingCount, overdueCount, nextDocument] = await Promise.all([
+    prisma.billingDocument.count({
+      where: {
+        companyId: input.companyId,
+        supplierId: supplier.id,
+        status: "pending",
+      },
+    }),
+    prisma.billingDocument.count({
+      where: {
+        companyId: input.companyId,
+        supplierId: supplier.id,
+        status: "overdue",
+      },
+    }),
+    prisma.billingDocument.findFirst({
+      where: {
+        companyId: input.companyId,
+        supplierId: supplier.id,
+        status: {
+          in: ["pending", "overdue"],
+        },
+      },
+      orderBy: { dueDate: "asc" },
+      select: {
+        description: true,
+        amount: true,
+        dueDate: true,
+        status: true,
+      },
+    }),
+  ]);
+
+  const lines = [
+    `Recebi sua mensagem, ${supplier.name}.`,
+    pendingCount > 0 || overdueCount > 0
+      ? `Seus documentos em aberto: pendentes ${pendingCount} | vencidos ${overdueCount}.`
+      : "No momento nao encontrei documentos pendentes ou vencidos para o seu cadastro.",
+    nextDocument
+      ? `Proximo vencimento: ${nextDocument.description} em ${formatDateBr(nextDocument.dueDate)} (${formatCurrency(
+          Number(nextDocument.amount),
+        )}) - ${formatBillingDocumentStatus(nextDocument.status)}.`
+      : "",
+    "Se quiser, eu posso listar por mes ou por prazo de vencimento (30, 15 ou 7 dias).",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return {
+    intent: pendingCount > 0 || overdueCount > 0 ? "billing_documents" : "billing_profile",
+    text: lines,
+  };
+}
+
+async function handleBillingToolAgentConversation(input: {
+  companyId: string;
+  incoming: IncomingData;
+  replyPhone: string;
+}): Promise<{ intent: BillingAgentIntent; text: string }> {
+  const userMessage = (input.incoming.text || "").trim() || "Mensagem recebida no canal de cobranca.";
+  const memory = await prisma.conversationMemory.findUnique({
+    where: {
+      companyId_phoneE164: {
+        companyId: input.companyId,
+        phoneE164: input.replyPhone,
+      },
+    },
+    select: {
+      contextJson: true,
+    },
+  });
+
+  const context = parseConversationContext(memory?.contextJson);
+  const history = buildAgentConversationHistory(context, userMessage);
+  const normalizedReplyPhone = normalizePhone(input.replyPhone) || input.replyPhone;
+  const phoneCandidates = buildPhoneCandidates(normalizedReplyPhone);
+  let inferredIntent: BillingAgentIntent = detectBillingIntent(userMessage);
+  const supplierByPhone = await findBillingSupplierByPhone(input.companyId, phoneCandidates);
+
+  const resolveSupplier = async (args: Record<string, unknown>) => {
+    const query = readStringArg(args, "query");
+    if (!query) {
+      return supplierByPhone;
+    }
+
+    const queryDigits = onlyDigits(query);
+    const conditions: Prisma.BillingSupplierWhereInput[] = [
+      { name: { contains: query } },
+      { externalCode: { contains: query } },
+    ];
+
+    if (queryDigits.length > 0) {
+      conditions.push({ document: { contains: queryDigits } });
+    }
+
+    const candidates = await prisma.billingSupplier.findMany({
+      where: {
+        companyId: input.companyId,
+        OR: conditions,
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 8,
+    });
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    if (supplierByPhone) {
+      const byPhoneMatch = candidates.find((item) => item.id === supplierByPhone.id);
+      if (byPhoneMatch) {
+        return byPhoneMatch;
+      }
+    }
+
+    return candidates[0] ?? null;
+  };
+
+  const result = await aiService.runToolAgent({
+    companyId: input.companyId,
+    userMessage,
+    conversationHistory: history,
+    systemInstruction: [
+      "Voce e um agente de cobranca e CRM conectado a ferramentas reais do sistema.",
+      "Sempre use ferramentas para localizar cliente, documentos e vencimentos antes de responder.",
+      "Nao invente valores, vencimentos, status ou codigo de documento.",
+      "Se nao localizar o cliente pelo numero, peca CPF/CNPJ ou razao social.",
+      "Responda de forma natural e objetiva para WhatsApp.",
+    ].join("\n"),
+    tools: [
+      {
+        name: "billing_get_customer_profile",
+        description: "Localiza um cliente de cobranca e retorna cadastro + resumo de documentos.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+        execute: async (args) => {
+          inferredIntent = "billing_profile";
+          const supplier = await resolveSupplier(args);
+          if (!supplier) {
+            return toCompactJson({
+              ok: false,
+              mensagem: "Nao encontrei cliente com essa referencia.",
+              acao: "Solicitar CPF/CNPJ ou razao social para localizar o cadastro.",
+            });
+          }
+
+          const [summaryByStatus, nextDocument] = await Promise.all([
+            prisma.billingDocument.groupBy({
+              by: ["status"],
+              where: {
+                companyId: input.companyId,
+                supplierId: supplier.id,
+              },
+              _count: { _all: true },
+              _sum: { amount: true },
+            }),
+            prisma.billingDocument.findFirst({
+              where: {
+                companyId: input.companyId,
+                supplierId: supplier.id,
+                status: {
+                  in: ["pending", "overdue"],
+                },
+              },
+              orderBy: { dueDate: "asc" },
+              select: {
+                description: true,
+                amount: true,
+                dueDate: true,
+                status: true,
+              },
+            }),
+          ]);
+
+          const totals = summaryByStatus.reduce<Record<string, { count: number; amount: number }>>((acc, item) => {
+            acc[item.status] = {
+              count: item._count._all,
+              amount: Number(item._sum.amount ?? 0),
+            };
+            return acc;
+          }, {});
+
+          return toCompactJson({
+            ok: true,
+            cliente: {
+              id: supplier.id,
+              nome: supplier.name,
+              documento: supplier.document,
+              telefone: supplier.phoneE164,
+              email: supplier.email,
+              autoEnvio: supplier.autoSendEnabled,
+            },
+            documentos: {
+              pendentes: totals.pending?.count ?? 0,
+              pendentesValor: totals.pending?.amount ?? 0,
+              pendentesValorFmt: formatCurrency(totals.pending?.amount ?? 0),
+              pagos: totals.paid?.count ?? 0,
+              pagosValor: totals.paid?.amount ?? 0,
+              pagosValorFmt: formatCurrency(totals.paid?.amount ?? 0),
+              vencidos: totals.overdue?.count ?? 0,
+              vencidosValor: totals.overdue?.amount ?? 0,
+              vencidosValorFmt: formatCurrency(totals.overdue?.amount ?? 0),
+            },
+            proximoDocumento: nextDocument
+              ? {
+                  descricao: nextDocument.description,
+                  valor: Number(nextDocument.amount),
+                  valorFmt: formatCurrency(Number(nextDocument.amount)),
+                  vencimento: nextDocument.dueDate.toISOString(),
+                  vencimentoFmt: formatDateBr(nextDocument.dueDate),
+                  status: nextDocument.status,
+                  statusFmt: formatBillingDocumentStatus(nextDocument.status),
+                }
+              : null,
+          });
+        },
+      },
+      {
+        name: "billing_list_documents",
+        description: "Lista documentos do cliente com filtros de status, prazo (dias) e mes/ano.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string" },
+            status: { type: "string", enum: ["pending", "paid", "overdue"] },
+            daysAhead: { type: "integer", minimum: 0, maximum: 365 },
+            month: { type: "integer", minimum: 1, maximum: 12 },
+            year: { type: "integer", minimum: 2020, maximum: 2100 },
+            limit: { type: "integer", minimum: 1, maximum: 20 },
+          },
+          additionalProperties: false,
+        },
+        execute: async (args) => {
+          inferredIntent = "billing_documents";
+          const supplier = await resolveSupplier(args);
+          if (!supplier) {
+            return toCompactJson({
+              ok: false,
+              mensagem: "Nao encontrei cliente com essa referencia.",
+              acao: "Solicitar CPF/CNPJ ou razao social para localizar os documentos.",
+            });
+          }
+
+          const statusRaw = readStringArg(args, "status");
+          const status = statusRaw === "pending" || statusRaw === "paid" || statusRaw === "overdue" ? statusRaw : undefined;
+          const limit = readNumberArg(args, "limit", { defaultValue: 8, min: 1, max: 20 });
+          const daysAhead = readOptionalNumberArg(args, "daysAhead", { min: 0, max: 365 });
+          const month = readOptionalNumberArg(args, "month", { min: 1, max: 12 });
+          const year = readOptionalNumberArg(args, "year", { min: 2020, max: 2100 });
+          const textQuery = readStringArg(args, "query");
+
+          let dueDateFilter: Prisma.DateTimeFilter | undefined;
+          if (month !== null && year !== null) {
+            const start = new Date(year, month - 1, 1, 0, 0, 0, 0);
+            const end = new Date(year, month, 0, 23, 59, 59, 999);
+            dueDateFilter = { gte: start, lte: end };
+          } else if (daysAhead !== null) {
+            const now = new Date();
+            const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+            const end = new Date(start);
+            end.setDate(end.getDate() + daysAhead);
+            end.setHours(23, 59, 59, 999);
+            dueDateFilter = { gte: start, lte: end };
+          }
+
+          const where: Prisma.BillingDocumentWhereInput = {
+            companyId: input.companyId,
+            supplierId: supplier.id,
+            status,
+            dueDate: dueDateFilter,
+          };
+
+          if (textQuery) {
+            where.OR = [{ description: { contains: textQuery } }, { externalKey: { contains: textQuery } }];
+          }
+
+          const documents = await prisma.billingDocument.findMany({
+            where,
+            orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }],
+            take: limit,
+            select: {
+              id: true,
+              externalKey: true,
+              description: true,
+              amount: true,
+              dueDate: true,
+              status: true,
+              duplicateNumber: true,
+              installment: true,
+              boletoLine: true,
+              barcode: true,
+            },
+          });
+
+          return toCompactJson({
+            ok: true,
+            cliente: {
+              id: supplier.id,
+              nome: supplier.name,
+              documento: supplier.document,
+            },
+            filtro: {
+              status: status ?? null,
+              daysAhead,
+              month,
+              year,
+              limit,
+            },
+            total: documents.length,
+            documentos: documents.map((document) => ({
+              id: document.id,
+              chave: document.externalKey,
+              descricao: document.description,
+              valor: Number(document.amount),
+              valorFmt: formatCurrency(Number(document.amount)),
+              vencimento: document.dueDate.toISOString(),
+              vencimentoFmt: formatDateBr(document.dueDate),
+              status: document.status,
+              statusFmt: formatBillingDocumentStatus(document.status),
+              duplicata: document.duplicateNumber,
+              parcela: document.installment,
+              codigoBarras: document.boletoLine ?? document.barcode ?? null,
+            })),
+          });
+        },
+      },
+      {
+        name: "billing_get_capabilities",
+        description: "Informa as capacidades operacionais do atendimento de cobranca.",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        execute: async () => {
+          inferredIntent = "billing_help";
+          return toCompactJson({
+            capacidades: [
+              "localizar cadastro de cliente por telefone ou referencia",
+              "listar documentos pendentes, pagos e vencidos",
+              "filtrar vencimentos por mes/ano",
+              "filtrar documentos por prazo (ex.: 30, 15 e 7 dias)",
+              "consultar detalhes de boletos e codigos de barras",
+            ],
+          });
+        },
+      },
+    ],
+    maxSteps: 5,
+  });
+
+  const resultText = result.text.trim();
+  const providerUnavailable = normalizeForMatch(resultText).includes("no momento nao consigo responder com ia generativa");
+  if (result.usedTools.length === 0 || resultText.length === 0 || providerUnavailable) {
+    return buildBillingFallbackReply({
+      companyId: input.companyId,
+      phoneCandidates,
+      hasMedia: input.incoming.hasMedia,
+    });
+  }
+
+  return {
+    intent: inferredIntent,
+    text: resultText,
+  };
+}
+
 function normalizeForMatch(value: string): string {
   return value
     .normalize("NFD")
@@ -1877,8 +2491,178 @@ function normalizeForMatch(value: string): string {
     .toLowerCase();
 }
 
+function onlyDigits(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+function isRepeatedDigits(value: string): boolean {
+  return /^(\d)\1+$/.test(value);
+}
+
+function isValidCpf(cpf: string): boolean {
+  if (cpf.length !== 11 || isRepeatedDigits(cpf)) {
+    return false;
+  }
+
+  const calcDigit = (base: string, factor: number) => {
+    let total = 0;
+    for (const char of base) {
+      total += Number(char) * factor;
+      factor -= 1;
+    }
+    const remainder = (total * 10) % 11;
+    return remainder === 10 ? 0 : remainder;
+  };
+
+  const first = calcDigit(cpf.slice(0, 9), 10);
+  const second = calcDigit(cpf.slice(0, 10), 11);
+
+  return first === Number(cpf[9]) && second === Number(cpf[10]);
+}
+
+function isValidCnpj(cnpj: string): boolean {
+  if (cnpj.length !== 14 || isRepeatedDigits(cnpj)) {
+    return false;
+  }
+
+  const calcDigit = (base: string, factors: number[]) => {
+    const total = base.split("").reduce((acc, digit, index) => acc + Number(digit) * factors[index]!, 0);
+    const remainder = total % 11;
+    return remainder < 2 ? 0 : 11 - remainder;
+  };
+
+  const first = calcDigit(cnpj.slice(0, 12), [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+  const second = calcDigit(cnpj.slice(0, 13), [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+
+  return first === Number(cnpj[12]) && second === Number(cnpj[13]);
+}
+
+function validateAndNormalizeCustomerDocument(value: string): { normalized: string; type: "cpf" | "cnpj" } | null {
+  const normalized = onlyDigits(value);
+
+  if (isValidCpf(normalized)) {
+    return { normalized, type: "cpf" };
+  }
+
+  if (isValidCnpj(normalized)) {
+    return { normalized, type: "cnpj" };
+  }
+
+  return null;
+}
+
+function formatCustomerDocument(value: string): string {
+  const digits = onlyDigits(value);
+  if (digits.length === 11) {
+    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
+  }
+  if (digits.length === 14) {
+    return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
+  }
+  return value;
+}
+
+function extractCustomerDocument(message: string): string | null {
+  const explicitPatterns = [
+    /(?:cpf|documento)\s*[:\-]?\s*([\d.\-\/]{11,18})/i,
+    /(?:cnpj|documento)\s*[:\-]?\s*([\d.\-\/]{14,20})/i,
+  ];
+
+  for (const pattern of explicitPatterns) {
+    const match = message.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const normalized = validateAndNormalizeCustomerDocument(match[1]);
+    if (normalized) {
+      return normalized.normalized;
+    }
+  }
+
+  const genericCandidates = message.match(/\d[\d.\-\/]{9,20}\d/g) ?? [];
+  for (const candidate of genericCandidates) {
+    const normalized = validateAndNormalizeCustomerDocument(candidate);
+    if (normalized) {
+      return normalized.normalized;
+    }
+  }
+
+  return null;
+}
+
+function buildMissingCustomerFields(input: {
+  clientName: string | null;
+  clientDocument: string | null;
+}): PendingCustomerField[] {
+  const missing: PendingCustomerField[] = [];
+  if (!input.clientName) {
+    missing.push("nome");
+  }
+  if (!input.clientDocument) {
+    missing.push("documento");
+  }
+  return missing;
+}
+
+function isGreetingOnlyMessage(message: string): boolean {
+  const normalized = normalizeForMatch(message)
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) {
+    return false;
+  }
+
+  if (
+    normalized.includes("agend") ||
+    normalized.includes("servic") ||
+    normalized.includes("recibo") ||
+    normalized.includes("fidelidade") ||
+    normalized.includes("cancel") ||
+    normalized.includes("agenda") ||
+    normalized.includes("horario")
+  ) {
+    return false;
+  }
+
+  const greetings = [
+    "oi",
+    "ola",
+    "opa",
+    "e ai",
+    "eae",
+    "salve",
+    "bom dia",
+    "boa tarde",
+    "boa noite",
+    "tudo bem",
+    "td bem",
+    "blz",
+    "beleza",
+  ];
+
+  if (greetings.includes(normalized)) {
+    return true;
+  }
+
+  return (
+    /^(oi|ola|opa|e ai|eae|salve|bom dia|boa tarde|boa noite)(\s+(tudo bem|td bem|blz|beleza))?$/.test(normalized) ||
+    /^(tudo bem|td bem)\s*(oi|ola)?$/.test(normalized)
+  );
+}
+
 function detectBarberIntent(message: string): BarberIntent {
   const text = normalizeForMatch(message);
+
+  if (text.includes("recibo") || text.includes("comprovante")) {
+    return "recibo";
+  }
+
+  if (text.includes("fidelidade") || text.includes("cartao fidelidade") || text.includes("pontos")) {
+    return "fidelidade";
+  }
 
   if (text.includes("cancel") || text.includes("desmarc")) {
     return "cancelar";
@@ -1897,6 +2681,77 @@ function detectBarberIntent(message: string): BarberIntent {
   }
 
   return "ajuda";
+}
+
+function detectBillingIntent(message: string): BillingAgentIntent {
+  const text = normalizeForMatch(message);
+
+  if (
+    text.includes("venc") ||
+    text.includes("boleto") ||
+    text.includes("fatura") ||
+    text.includes("document") ||
+    text.includes("pagamento") ||
+    text.includes("pagar") ||
+    text.includes("penden") ||
+    text.includes("cobranc")
+  ) {
+    return "billing_documents";
+  }
+
+  if (
+    text.includes("cadastro") ||
+    text.includes("meu dado") ||
+    text.includes("atualizar") ||
+    text.includes("cpf") ||
+    text.includes("cnpj")
+  ) {
+    return "billing_profile";
+  }
+
+  return "crm_inbound";
+}
+
+function formatBillingDocumentStatus(status: "pending" | "paid" | "overdue"): string {
+  if (status === "pending") {
+    return "pendente";
+  }
+
+  if (status === "paid") {
+    return "pago";
+  }
+
+  return "vencido";
+}
+
+function summarizeNeedsMoreData(operationSummary: string): boolean {
+  const normalized = normalizeForMatch(operationSummary || "");
+  return (
+    normalized.includes("preciso de") ||
+    normalized.includes("preciso do") ||
+    normalized.includes("preciso da") ||
+    normalized.includes("me informe") ||
+    normalized.includes("falta") ||
+    normalized.includes("faltam") ||
+    normalized.includes("pendencia") ||
+    normalized.includes("pendencia") ||
+    normalized.includes("solicitar novamente") ||
+    normalized.includes("solicitar ao cliente") ||
+    normalized.includes("solicitar um novo horario") ||
+    normalized.includes("novo horario")
+  );
+}
+
+function looksLikeBookingConfirmed(text: string): boolean {
+  const normalized = normalizeForMatch(text || "");
+  return (
+    normalized.includes("agendamento confirmado") ||
+    normalized.includes("confirmando:") ||
+    normalized.includes("confirmando ") ||
+    normalized.includes("deixo tudo pronto") ||
+    normalized.includes("ja deixo tudo pronto") ||
+    normalized.includes("tudo certo?")
+  );
 }
 
 function normalizeClientName(value: string): string | null {
@@ -1952,11 +2807,19 @@ function looksLikeStandaloneName(message: string): boolean {
   return /^[\p{L}\s'-]+$/u.test(trimmed);
 }
 
+function sanitizeExtractedClientName(rawValue: string): string {
+  return rawValue
+    .replace(/\s+e\s+(?:quero|gostaria|preciso|posso|pode|tem|amanha|hoje)\b.*$/i, "")
+    .replace(/\s+(?:amanha|hoje)\b.*$/i, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function extractClientName(message: string): string | null {
   const patterns = [
-    /(?:meu nome\s*(?:e|é)|nome)\s*[:\-]?\s*([^\n,.!?]+)/i,
-    /me chamo\s+([^\n,.!?]+)/i,
-    /sou\s+([^\n,.!?]+)/i,
+    /(?:meu nome\s*(?:e|é)|nome)\s*[:\-]?\s*([^\n,.!?]+?)(?=(?:\s+e\s+(?:quero|gostaria|preciso|posso|pode|tem|amanha|hoje)\b|$))/i,
+    /me chamo\s+([^\n,.!?]+?)(?=(?:\s+e\s+(?:quero|gostaria|preciso|posso|pode|tem|amanha|hoje)\b|$))/i,
+    /sou\s+([^\n,.!?]+?)(?=(?:\s+e\s+(?:quero|gostaria|preciso|posso|pode|tem|amanha|hoje)\b|$))/i,
   ];
 
   for (const pattern of patterns) {
@@ -1965,7 +2828,7 @@ function extractClientName(message: string): string | null {
       continue;
     }
 
-    const normalized = normalizeClientName(match[1]);
+    const normalized = normalizeClientName(sanitizeExtractedClientName(match[1]));
     if (normalized) {
       return normalized;
     }
@@ -1978,13 +2841,163 @@ function extractClientName(message: string): string | null {
   return null;
 }
 
+function buildBarberDateTime(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+): Date | null {
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(hour) ||
+    !Number.isFinite(minute)
+  ) {
+    return null;
+  }
+
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return null;
+  }
+
+  const result = new Date(year, month - 1, day, hour, minute, 0, 0);
+  if (Number.isNaN(result.getTime())) {
+    return null;
+  }
+
+  if (
+    result.getFullYear() !== year ||
+    result.getMonth() !== month - 1 ||
+    result.getDate() !== day ||
+    result.getHours() !== hour ||
+    result.getMinutes() !== minute
+  ) {
+    return null;
+  }
+
+  return result;
+}
+
+function parseBarberDateOnly(message: string): BarberDateParts | null {
+  const normalized = normalizeForMatch(message).replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const fullYear = normalized.match(/\b(\d{2})\/(\d{2})\/(\d{4})\b/);
+  if (fullYear) {
+    const day = Number(fullYear[1]);
+    const month = Number(fullYear[2]);
+    const year = Number(fullYear[3]);
+    const candidate = buildBarberDateTime(year, month, day, 12, 0);
+    if (candidate) {
+      return { year, month, day };
+    }
+  }
+
+  const noYear = normalized.match(/\b(\d{2})\/(\d{2})(?!\/\d{4})\b/);
+  if (noYear) {
+    const day = Number(noYear[1]);
+    const month = Number(noYear[2]);
+    const now = new Date();
+    let year = now.getFullYear();
+    let candidate = buildBarberDateTime(year, month, day, 12, 0);
+    if (candidate && candidate.getTime() < now.getTime() - 12 * 60 * 60 * 1000) {
+      year += 1;
+      candidate = buildBarberDateTime(year, month, day, 12, 0);
+    }
+    if (candidate) {
+      return { year, month, day };
+    }
+  }
+
+  const relative = normalized.match(/\b(hoje|amanha)\b/);
+  if (relative) {
+    const base = new Date();
+    if (relative[1] === "amanha") {
+      base.setDate(base.getDate() + 1);
+    }
+
+    return {
+      year: base.getFullYear(),
+      month: base.getMonth() + 1,
+      day: base.getDate(),
+    };
+  }
+
+  return null;
+}
+
+function parseBarberTimeOnly(message: string): BarberTimeParts | null {
+  const normalizeTime = (hour: number, minute: number): BarberTimeParts | null => {
+    const candidate = buildBarberDateTime(2026, 1, 1, hour, minute);
+    if (!candidate) {
+      return null;
+    }
+    return { hour, minute };
+  };
+
+  const normalized = normalizeForMatch(message).replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const colon = normalized.match(/\b(\d{1,2}):(\d{2})\b/);
+  if (colon) {
+    const parsed = normalizeTime(Number(colon[1]), Number(colon[2]));
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  const compact = normalized.match(/\b(\d{1,2})h(\d{1,2})\b/);
+  if (compact) {
+    const parsed = normalizeTime(Number(compact[1]), Number(compact[2]));
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  const withWords = normalized.match(
+    /\b(\d{1,2})\s*(?:h|hs|hora|horas)\b(?:[^\d]*(\d{1,2})\s*(?:min|minuto|minutos))?/,
+  );
+  if (withWords) {
+    const hour = Number(withWords[1]);
+    const minute = withWords[2] ? Number(withWords[2]) : 0;
+    const parsed = normalizeTime(hour, minute);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function resolveNearestFutureFromTime(time: BarberTimeParts): Date | null {
+  const now = new Date();
+  const today = buildBarberDateTime(now.getFullYear(), now.getMonth() + 1, now.getDate(), time.hour, time.minute);
+  if (!today) {
+    return null;
+  }
+
+  if (today.getTime() >= now.getTime()) {
+    return today;
+  }
+
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return buildBarberDateTime(tomorrow.getFullYear(), tomorrow.getMonth() + 1, tomorrow.getDate(), time.hour, time.minute);
+}
+
 function parseBarberDateTime(message: string): Date | null {
   const isoMatch = message.match(/(\d{4}-\d{2}-\d{2})[ t](\d{1,2}:\d{2})/i);
   if (isoMatch) {
     const [year, month, day] = isoMatch[1].split("-").map((part) => Number(part));
     const [hour, minute] = isoMatch[2].split(":").map((part) => Number(part));
-    const result = new Date(year, month - 1, day, hour, minute, 0, 0);
-    if (!Number.isNaN(result.getTime())) {
+    const result = buildBarberDateTime(year, month, day, hour, minute);
+    if (result) {
       return result;
     }
   }
@@ -1995,8 +3008,23 @@ function parseBarberDateTime(message: string): Date | null {
     const month = Number(brMatch[2]);
     const year = Number(brMatch[3]);
     const [hour, minute] = brMatch[4].split(":").map((part) => Number(part));
-    const result = new Date(year, month - 1, day, hour, minute, 0, 0);
-    if (!Number.isNaN(result.getTime())) {
+    const result = buildBarberDateTime(year, month, day, hour, minute);
+    if (result) {
+      return result;
+    }
+  }
+
+  const brHourWordsMatch = message.match(
+    /(\d{2})\/(\d{2})\/(\d{4})[^\d]*(\d{1,2})\s*(?:h|hs|hora|horas)\b(?:[^\d]*(\d{1,2})\s*(?:min|minuto|minutos))?/i,
+  );
+  if (brHourWordsMatch) {
+    const day = Number(brHourWordsMatch[1]);
+    const month = Number(brHourWordsMatch[2]);
+    const year = Number(brHourWordsMatch[3]);
+    const hour = Number(brHourWordsMatch[4]);
+    const minute = brHourWordsMatch[5] ? Number(brHourWordsMatch[5]) : 0;
+    const result = buildBarberDateTime(year, month, day, hour, minute);
+    if (result) {
       return result;
     }
   }
@@ -2007,8 +3035,8 @@ function parseBarberDateTime(message: string): Date | null {
     const month = Number(brNoYearMatch[2]);
     const [hour, minute] = brNoYearMatch[3].split(":").map((part) => Number(part));
     const now = new Date();
-    const result = new Date(now.getFullYear(), month - 1, day, hour, minute, 0, 0);
-    if (!Number.isNaN(result.getTime())) {
+    const result = buildBarberDateTime(now.getFullYear(), month, day, hour, minute);
+    if (result) {
       if (result.getTime() < now.getTime() - 12 * 60 * 60 * 1000) {
         result.setFullYear(result.getFullYear() + 1);
       }
@@ -2016,7 +3044,25 @@ function parseBarberDateTime(message: string): Date | null {
     }
   }
 
-  const normalized = normalizeForMatch(message);
+  const brNoYearHourWordsMatch = message.match(
+    /(\d{2})\/(\d{2})(?!\/\d{4})[^\d]*(\d{1,2})\s*(?:h|hs|hora|horas)\b(?:[^\d]*(\d{1,2})\s*(?:min|minuto|minutos))?/i,
+  );
+  if (brNoYearHourWordsMatch) {
+    const day = Number(brNoYearHourWordsMatch[1]);
+    const month = Number(brNoYearHourWordsMatch[2]);
+    const hour = Number(brNoYearHourWordsMatch[3]);
+    const minute = brNoYearHourWordsMatch[4] ? Number(brNoYearHourWordsMatch[4]) : 0;
+    const now = new Date();
+    const result = buildBarberDateTime(now.getFullYear(), month, day, hour, minute);
+    if (result) {
+      if (result.getTime() < now.getTime() - 12 * 60 * 60 * 1000) {
+        result.setFullYear(result.getFullYear() + 1);
+      }
+      return result;
+    }
+  }
+
+  const normalized = normalizeForMatch(message).replace(/\s+/g, " ").trim();
   const relativeMatch = normalized.match(/\b(hoje|amanha)\b[^\d]*(\d{1,2}:\d{2})/);
   if (relativeMatch) {
     const [hour, minute] = relativeMatch[2].split(":").map((part) => Number(part));
@@ -2024,10 +3070,45 @@ function parseBarberDateTime(message: string): Date | null {
     if (relativeMatch[1] === "amanha") {
       base.setDate(base.getDate() + 1);
     }
-    base.setHours(hour, minute, 0, 0);
-    if (!Number.isNaN(base.getTime())) {
-      return base;
+    const result = buildBarberDateTime(base.getFullYear(), base.getMonth() + 1, base.getDate(), hour, minute);
+    if (result) {
+      return result;
     }
+  }
+
+  const relativeCompactMatch = normalized.match(/\b(hoje|amanha)\b[^\d]*(\d{1,2})h(\d{1,2})\b/);
+  if (relativeCompactMatch) {
+    const hour = Number(relativeCompactMatch[2]);
+    const minute = Number(relativeCompactMatch[3]);
+    const base = new Date();
+    if (relativeCompactMatch[1] === "amanha") {
+      base.setDate(base.getDate() + 1);
+    }
+    const result = buildBarberDateTime(base.getFullYear(), base.getMonth() + 1, base.getDate(), hour, minute);
+    if (result) {
+      return result;
+    }
+  }
+
+  const relativeHourWordsMatch = normalized.match(
+    /\b(hoje|amanha)\b[^\d]*(\d{1,2})\s*(?:h|hs|hora|horas)\b(?:[^\d]*(\d{1,2})\s*(?:min|minuto|minutos))?/,
+  );
+  if (relativeHourWordsMatch) {
+    const hour = Number(relativeHourWordsMatch[2]);
+    const minute = relativeHourWordsMatch[3] ? Number(relativeHourWordsMatch[3]) : 0;
+    const base = new Date();
+    if (relativeHourWordsMatch[1] === "amanha") {
+      base.setDate(base.getDate() + 1);
+    }
+    const result = buildBarberDateTime(base.getFullYear(), base.getMonth() + 1, base.getDate(), hour, minute);
+    if (result) {
+      return result;
+    }
+  }
+
+  const timeOnly = parseBarberTimeOnly(message);
+  if (timeOnly) {
+    return resolveNearestFutureFromTime(timeOnly);
   }
 
   return null;
@@ -2062,6 +3143,86 @@ function buildMissingBarberFields(input: {
     missing.push("horario");
   }
   return missing;
+}
+
+async function findBookingCustomerByPhone(companyId: string, phoneCandidates: string[]) {
+  if (phoneCandidates.length === 0) {
+    return null;
+  }
+
+  const wherePhone = phoneCandidates.flatMap((candidate) => [{ phoneE164: candidate }, { phoneE164: { endsWith: candidate } }]);
+  const candidates = await prisma.bookingCustomer.findMany({
+    where: {
+      companyId,
+      OR: wherePhone,
+    },
+    take: 20,
+  });
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const best = candidates
+    .map((item) => ({
+      item,
+      score: phoneMatchScore(item.phoneE164, phoneCandidates),
+    }))
+    .sort((a, b) => b.score - a.score)[0];
+
+  return best && best.score > 0 ? best.item : null;
+}
+
+async function findBillingSupplierByPhone(companyId: string, phoneCandidates: string[]) {
+  if (phoneCandidates.length === 0) {
+    return null;
+  }
+
+  const wherePhone = phoneCandidates.flatMap((candidate) => [{ phoneE164: candidate }, { phoneE164: { endsWith: candidate } }]);
+  const candidates = await prisma.billingSupplier.findMany({
+    where: {
+      companyId,
+      OR: wherePhone,
+    },
+    take: 20,
+  });
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const best = candidates
+    .map((item) => ({
+      item,
+      score: phoneMatchScore(item.phoneE164 || "", phoneCandidates),
+    }))
+    .sort((a, b) => b.score - a.score)[0];
+
+  return best && best.score > 0 ? best.item : null;
+}
+
+async function calculateBookingLoyaltyProgress(input: { companyId: string; customerId: string }): Promise<{
+  completedServices: number;
+  nextRewardIn: number;
+  rewardsUnlocked: number;
+}> {
+  const completedServices = await prisma.barberAppointment.count({
+    where: {
+      companyId: input.companyId,
+      bookingCustomerId: input.customerId,
+      status: "completed",
+    },
+  });
+
+  const rewardsUnlocked = Math.floor(completedServices / BOOKING_LOYALTY_GOAL);
+  const nextRewardInRaw = BOOKING_LOYALTY_GOAL - (completedServices % BOOKING_LOYALTY_GOAL);
+  const nextRewardIn = nextRewardInRaw === BOOKING_LOYALTY_GOAL ? 0 : nextRewardInRaw;
+
+  return {
+    completedServices,
+    nextRewardIn,
+    rewardsUnlocked,
+  };
 }
 
 function looksLikeXml(content: string): boolean {
@@ -2119,6 +3280,43 @@ async function resolveXmlFromIncoming(incoming: IncomingData): Promise<string | 
   return null;
 }
 
+async function resolveIncomingMediaPayload(
+  incoming: IncomingData,
+  instanceName?: string,
+): Promise<{ base64: string; fileName: string | null; mimeType: string | null; mediaType: string | null } | null> {
+  if (!incoming.hasMedia) {
+    return null;
+  }
+
+  if (incoming.rawMessage) {
+    const media = await evolutionService.getBase64FromMediaMessage(incoming.rawMessage, instanceName);
+    if (media?.base64) {
+      return {
+        base64: media.base64,
+        fileName: media.fileName ?? incoming.mediaFileName ?? null,
+        mimeType: media.mimetype ?? incoming.mediaMimeType ?? null,
+        mediaType: media.mediaType ?? "document",
+      };
+    }
+  }
+
+  if (incoming.mediaUrl) {
+    try {
+      const buffer = await evolutionService.downloadMedia(incoming.mediaUrl);
+      return {
+        base64: buffer.toString("base64"),
+        fileName: incoming.mediaFileName,
+        mimeType: incoming.mediaMimeType,
+        mediaType: "document",
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 function toMinutes(value: string): number {
   const [hour, minute] = value.split(":").map((part) => Number(part));
   return hour * 60 + minute;
@@ -2153,17 +3351,462 @@ async function handleBarberConversation(input: {
   companyId: string;
   incoming: IncomingData;
   replyPhone: string;
-}): Promise<{ intent: BarberIntent; text: string }> {
+}): Promise<BarberConversationReply> {
   const clientPhone = normalizePhone(input.replyPhone) || input.replyPhone;
-  const detectedIntent = detectBarberIntent(input.incoming.text || "");
+  const incomingUserMessage = (input.incoming.text || "").trim() || "Solicitacao de agendamento via WhatsApp";
+  const detectedIntent = detectBarberIntent(incomingUserMessage);
   const triageState = await getBarberTriageState(input.companyId, clientPhone);
-  const intent = triageState && detectedIntent === "ajuda" ? "agendar" : detectedIntent;
+  const parsedCustomerName = extractClientName(incomingUserMessage);
+  const parsedCustomerDocument = extractCustomerDocument(incomingUserMessage);
+  const parsedDateOnly = parseBarberDateOnly(incomingUserMessage);
+  const parsedTimeOnly = parseBarberTimeOnly(incomingUserMessage);
+  const isGreetingMessage = isGreetingOnlyMessage(incomingUserMessage);
+  const hasRegistrationPayload =
+    Boolean(parsedCustomerName || parsedCustomerDocument) || /^\d{11,14}$/.test(onlyDigits(incomingUserMessage));
+  const shouldResumeCustomerRegistration =
+    detectedIntent === "ajuda" &&
+    !isGreetingMessage &&
+    Boolean(
+      triageState &&
+        (triageState.lastIntent === "recibo" || triageState.lastIntent === "fidelidade") &&
+        hasRegistrationPayload,
+    );
+  const shouldResumeScheduling =
+    detectedIntent === "ajuda" &&
+    !isGreetingMessage &&
+    Boolean(
+      triageState &&
+        triageState.lastIntent === "agendar" &&
+        (triageState.clientName || triageState.serviceId || triageState.startsAtIso),
+    );
+  const intent: BarberIntent =
+    detectedIntent !== "ajuda"
+      ? detectedIntent
+      : shouldResumeCustomerRegistration && triageState?.lastIntent
+        ? triageState.lastIntent
+        : shouldResumeScheduling
+          ? "agendar"
+          : "ajuda";
   const clientPhoneCandidates = buildPhoneCandidates(clientPhone);
 
   const phoneWhere =
     clientPhoneCandidates.length > 0
       ? clientPhoneCandidates.flatMap((candidate) => [{ clientPhone: candidate }, { clientPhone: { endsWith: candidate } }])
       : [{ clientPhone }];
+
+  const renderReply = async (
+    replyIntent: BarberIntent,
+    operationSummary: string,
+    options?: { forcePending?: boolean },
+  ): Promise<string> => {
+    const fallback = operationSummary.trim();
+    const pending = options?.forcePending ?? summarizeNeedsMoreData(fallback);
+
+    if (pending || (replyIntent === "ajuda" && isGreetingMessage)) {
+      return fallback;
+    }
+
+    try {
+      const natural = await aiService.generateBookingNaturalReply({
+        companyId: input.companyId,
+        userMessage: incomingUserMessage,
+        intent: replyIntent,
+        operationSummary: fallback,
+      });
+      const normalizedNatural = natural.trim();
+      if (!normalizedNatural) {
+        return fallback;
+      }
+
+      // Evita resposta de "confirmacao" quando o resumo operacional ainda indica dados pendentes.
+      if (pending && looksLikeBookingConfirmed(normalizedNatural)) {
+        return fallback;
+      }
+
+      return normalizedNatural;
+    } catch {
+      return fallback;
+    }
+  };
+
+  const company = await prisma.company.findUnique({
+    where: { id: input.companyId },
+    select: {
+      id: true,
+      name: true,
+      cnpj: true,
+      bookingSector: true,
+    },
+  });
+
+  if (!company) {
+    return {
+      intent: "ajuda",
+      text: await renderReply("ajuda", "Nao foi possivel identificar a empresa para continuar o atendimento."),
+    };
+  }
+
+  let knownCustomer = await findBookingCustomerByPhone(input.companyId, clientPhoneCandidates);
+
+  if (parsedCustomerName) {
+    try {
+      await rememberConversationUserName({
+        companyId: input.companyId,
+        phone: clientPhone,
+        userName: parsedCustomerName,
+      });
+    } catch {
+      // Persistencia de nome nao deve interromper o atendimento.
+    }
+  } else if (knownCustomer?.name) {
+    try {
+      await rememberConversationUserName({
+        companyId: input.companyId,
+        phone: clientPhone,
+        userName: knownCustomer.name,
+      });
+    } catch {
+      // Persistencia de nome nao deve interromper o atendimento.
+    }
+  }
+
+  const rememberedClientName = parsedCustomerName ?? triageState?.clientName ?? knownCustomer?.name ?? null;
+
+  if (!rememberedClientName && (intent === "agendar" || intent === "listar_servicos" || intent === "ajuda")) {
+    await upsertBarberTriageState({
+      companyId: input.companyId,
+      phone: clientPhone,
+      clientName: null,
+      clientDocument: parsedCustomerDocument ?? triageState?.clientDocument ?? null,
+      serviceId: triageState?.serviceId ?? null,
+      startsAtIso: triageState?.startsAtIso ?? null,
+      lastIntent: "agendar",
+    });
+
+    const operationSummary = [
+      "Antes de continuar, preciso registrar seu nome.",
+      "Assim salvo seu nome junto com este numero e nao preciso perguntar novamente nas proximas conversas.",
+      "- Responda apenas com seu nome completo.",
+    ].join("\n");
+
+    return {
+      intent: "agendar",
+      text: await renderReply("agendar", operationSummary, { forcePending: true }),
+    };
+  }
+
+  const ensureRegisteredCustomer = async (customerIntent: "recibo" | "fidelidade") => {
+    if (knownCustomer) {
+      return { customer: knownCustomer, text: null as string | null };
+    }
+
+    const nextCustomerName = parsedCustomerName ?? triageState?.clientName ?? null;
+    const nextCustomerDocument = parsedCustomerDocument ?? triageState?.clientDocument ?? null;
+    const missing = buildMissingCustomerFields({
+      clientName: nextCustomerName,
+      clientDocument: nextCustomerDocument,
+    });
+
+    if (missing.length > 0) {
+      await upsertBarberTriageState({
+        companyId: input.companyId,
+        phone: clientPhone,
+        clientName: nextCustomerName,
+        clientDocument: nextCustomerDocument,
+        lastIntent: customerIntent,
+      });
+
+      const lines: string[] = [];
+      lines.push("Antes de continuar, preciso concluir seu cadastro para o cartao fidelidade.");
+      if (nextCustomerName) {
+        lines.push(`Nome identificado: ${nextCustomerName}.`);
+      }
+      if (nextCustomerDocument) {
+        lines.push(`Documento identificado: ${formatCustomerDocument(nextCustomerDocument)}.`);
+      }
+      if (missing.includes("nome")) {
+        lines.push("- Me informe seu nome completo.");
+      }
+      if (missing.includes("documento")) {
+        lines.push("- Me informe seu CPF ou CNPJ para cadastro.");
+      }
+
+      return {
+        customer: null,
+        text: await renderReply(customerIntent, lines.join("\n"), { forcePending: true }),
+      };
+    }
+
+    const normalizedDocument = validateAndNormalizeCustomerDocument(nextCustomerDocument!);
+    if (!normalizedDocument) {
+      await upsertBarberTriageState({
+        companyId: input.companyId,
+        phone: clientPhone,
+        clientName: nextCustomerName,
+        clientDocument: null,
+        lastIntent: customerIntent,
+      });
+
+      return {
+        customer: null,
+        text: await renderReply(
+          customerIntent,
+          "O documento informado parece invalido. Solicite novamente um CPF (11 digitos) ou CNPJ (14 digitos).",
+          { forcePending: true },
+        ),
+      };
+    }
+
+    const customer = await prisma.bookingCustomer.upsert({
+      where: {
+        companyId_document: {
+          companyId: input.companyId,
+          document: normalizedDocument.normalized,
+        },
+      },
+      update: {
+        name: nextCustomerName!,
+        phoneE164: clientPhone,
+      },
+      create: {
+        companyId: input.companyId,
+        name: nextCustomerName!,
+        document: normalizedDocument.normalized,
+        phoneE164: clientPhone,
+      },
+    });
+
+    knownCustomer = customer;
+    await clearBarberTriageState(input.companyId, clientPhone, {
+      lastIntent: customerIntent,
+      userName: customer.name,
+    });
+
+    return { customer, text: null as string | null };
+  };
+
+  if (intent === "recibo") {
+    const registration = await ensureRegisteredCustomer("recibo");
+    if (!registration.customer) {
+      return {
+        intent,
+        text: registration.text || (await renderReply(intent, "Nao foi possivel concluir o cadastro do cliente.")),
+      };
+    }
+
+    await prisma.barberAppointment.updateMany({
+      where: {
+        companyId: input.companyId,
+        bookingCustomerId: null,
+        OR: phoneWhere,
+        status: "completed",
+      },
+      data: {
+        bookingCustomerId: registration.customer.id,
+      },
+    });
+
+    let appointment = await prisma.barberAppointment.findFirst({
+      where: {
+        companyId: input.companyId,
+        AND: [
+          {
+            OR: phoneWhere,
+          },
+          {
+            OR: [
+              { status: "completed" },
+              {
+                status: "scheduled",
+                startsAt: {
+                  lte: new Date(),
+                },
+              },
+            ],
+          },
+        ],
+      },
+      orderBy: { startsAt: "desc" },
+      include: {
+        barber: {
+          select: {
+            name: true,
+          },
+        },
+        service: {
+          select: {
+            name: true,
+            price: true,
+          },
+        },
+      },
+    });
+
+    if (!appointment) {
+      return {
+        intent,
+        text: await renderReply(
+          intent,
+          "Nao encontrei nenhum atendimento concluido para emitir recibo neste numero. Oriente o cliente a solicitar apos finalizar o servico.",
+        ),
+      };
+    }
+
+    if (appointment.status === "scheduled") {
+      if (appointment.endsAt.getTime() > Date.now()) {
+        return {
+          intent,
+          text: await renderReply(
+            intent,
+            `O atendimento mais recente ainda nao terminou. Data prevista de conclusao: ${formatDateTimeBr(appointment.endsAt)}.`,
+          ),
+        };
+      }
+
+      appointment = await prisma.barberAppointment.update({
+        where: { id: appointment.id },
+        data: {
+          status: "completed",
+          bookingCustomerId: registration.customer.id,
+        },
+        include: {
+          barber: {
+            select: {
+              name: true,
+            },
+          },
+          service: {
+            select: {
+              name: true,
+              price: true,
+            },
+          },
+        },
+      });
+    } else if (!appointment.bookingCustomerId) {
+      appointment = await prisma.barberAppointment.update({
+        where: { id: appointment.id },
+        data: {
+          bookingCustomerId: registration.customer.id,
+        },
+        include: {
+          barber: {
+            select: {
+              name: true,
+            },
+          },
+          service: {
+            select: {
+              name: true,
+              price: true,
+            },
+          },
+        },
+      });
+    }
+
+    const loyalty = await calculateBookingLoyaltyProgress({
+      companyId: input.companyId,
+      customerId: registration.customer.id,
+    });
+
+    const operationSummary = [
+      "Recibo de servico pronto para envio ao cliente.",
+      `Empresa: ${company.name}.`,
+      `CNPJ: ${formatCustomerDocument(company.cnpj)}.`,
+      `Cliente: ${registration.customer.name}.`,
+      `Documento do cliente: ${formatCustomerDocument(registration.customer.document)}.`,
+      `Servico: ${appointment.service.name}.`,
+      `Valor: ${formatCurrency(Number(appointment.service.price))}.`,
+      `Data do atendimento: ${formatDateTimeBr(appointment.startsAt)}.`,
+      `Recibo: ${appointment.id}.`,
+      `Cartao fidelidade: ${loyalty.completedServices} servico(s) concluido(s).`,
+      loyalty.nextRewardIn > 0
+        ? `Faltam ${loyalty.nextRewardIn} atendimento(s) para liberar o proximo premio.`
+        : `Meta de ${BOOKING_LOYALTY_GOAL} atendimentos concluida. Premio disponivel.`,
+      "Anexar o recibo em PDF nesta resposta.",
+    ]
+      .join("\n")
+      .trim();
+
+    const receiptPdf = await generateBookingReceiptPdf({
+      receiptId: appointment.id,
+      companyName: company.name,
+      companyDocument: formatCustomerDocument(company.cnpj),
+      clientName: registration.customer.name,
+      clientDocument: formatCustomerDocument(registration.customer.document),
+      serviceName: appointment.service.name,
+      serviceValue: Number(appointment.service.price),
+      appointmentDate: appointment.startsAt,
+      resourceName: appointment.barber?.name ?? null,
+    });
+
+    const receiptAttachment: OutgoingAttachment = {
+      fileName: `recibo-${appointment.id}.pdf`,
+      mimeType: "application/pdf",
+      mediaType: "document",
+      base64: Buffer.from(receiptPdf).toString("base64"),
+    };
+
+    await clearBarberTriageState(input.companyId, clientPhone, {
+      userName: registration.customer.name,
+    });
+
+    return {
+      intent,
+      text: await renderReply(intent, operationSummary),
+      attachment: receiptAttachment,
+    };
+  }
+
+  if (intent === "fidelidade") {
+    const registration = await ensureRegisteredCustomer("fidelidade");
+    if (!registration.customer) {
+      return {
+        intent,
+        text: registration.text || (await renderReply(intent, "Nao foi possivel concluir o cadastro do cliente.")),
+      };
+    }
+
+    await prisma.barberAppointment.updateMany({
+      where: {
+        companyId: input.companyId,
+        bookingCustomerId: null,
+        OR: phoneWhere,
+        status: "completed",
+      },
+      data: {
+        bookingCustomerId: registration.customer.id,
+      },
+    });
+
+    const loyalty = await calculateBookingLoyaltyProgress({
+      companyId: input.companyId,
+      customerId: registration.customer.id,
+    });
+
+    const operationSummary = [
+      "Consulta de cartao fidelidade concluida.",
+      `Cliente: ${registration.customer.name}.`,
+      `Documento: ${formatCustomerDocument(registration.customer.document)}.`,
+      `Atendimentos concluidos: ${loyalty.completedServices}.`,
+      `Premios liberados: ${loyalty.rewardsUnlocked}.`,
+      loyalty.nextRewardIn > 0
+        ? `Faltam ${loyalty.nextRewardIn} atendimento(s) para o proximo premio.`
+        : `Meta atual concluida. Proximo atendimento ja inicia um novo ciclo de fidelidade.`,
+    ]
+      .join("\n")
+      .trim();
+
+    await clearBarberTriageState(input.companyId, clientPhone, {
+      userName: registration.customer.name,
+    });
+
+    return {
+      intent,
+      text: await renderReply(intent, operationSummary),
+    };
+  }
 
   if (intent === "listar_servicos") {
     const services = await prisma.barberService.findMany({
@@ -2183,10 +3826,25 @@ async function handleBarberConversation(input: {
     });
 
     if (services.length === 0) {
+      const operationSummary =
+        "No momento nao ha servicos ativos cadastrados no sistema para novos agendamentos. Oriente o cliente a tentar novamente mais tarde.";
       return {
         intent,
-        text: "No momento nao ha servicos ativos cadastrados. Fale com a equipe para configurar o catalogo.",
+        text: await renderReply(intent, operationSummary),
       };
+    }
+
+    // Quando existe apenas 1 servico ativo, persistimos no MySQL para continuar o fluxo no proximo turno.
+    if (services.length === 1) {
+      await upsertBarberTriageState({
+        companyId: input.companyId,
+        phone: clientPhone,
+        clientName: rememberedClientName,
+        clientDocument: triageState?.clientDocument ?? null,
+        serviceId: services[0]!.id,
+        startsAtIso: triageState?.startsAtIso ?? null,
+        lastIntent: "agendar",
+      });
     }
 
     const lines = services.map(
@@ -2194,11 +3852,18 @@ async function handleBarberConversation(input: {
         `- ${service.name} | ${service.durationMinutes}min | ${formatCurrency(Number(service.price))}${service.barber?.name ? ` | ${service.barber.name}` : ""}`,
     );
 
+    const operationSummary = [
+      `Foram encontrados ${services.length} servico(s) ativo(s):`,
+      ...lines,
+      "",
+      "Se o cliente quiser, pode agendar enviando nome, servico e data/hora.",
+    ]
+      .join("\n")
+      .trim();
+
     return {
       intent,
-      text: ["Servicos disponiveis:", ...lines, "", "Para agendar, envie por exemplo:", "agendar corte masculino 20/02/2026 14:30"]
-        .join("\n")
-        .trim(),
+      text: await renderReply(intent, operationSummary),
     };
   }
 
@@ -2229,9 +3894,11 @@ async function handleBarberConversation(input: {
     });
 
     if (appointments.length === 0) {
+      const operationSummary =
+        "Nao foram encontrados agendamentos futuros vinculados ao numero do cliente. Informe que ele pode solicitar um novo agendamento.";
       return {
         intent,
-        text: "Voce nao possui agendamentos futuros. Se quiser, posso ajudar a marcar um horario agora.",
+        text: await renderReply(intent, operationSummary),
       };
     }
 
@@ -2239,9 +3906,18 @@ async function handleBarberConversation(input: {
       return `- ${formatDateTimeBr(appointment.startsAt)} | ${appointment.service.name} | ${appointment.barber.name}`;
     });
 
+    const operationSummary = [
+      "Agendamentos futuros encontrados para este cliente:",
+      ...lines,
+      "",
+      "Se o cliente quiser cancelar, solicitar confirmacao da operacao.",
+    ]
+      .join("\n")
+      .trim();
+
     return {
       intent,
-      text: ["Seus proximos agendamentos:", ...lines, "", "Se quiser cancelar, envie: cancelar agendamento"].join("\n").trim(),
+      text: await renderReply(intent, operationSummary),
     };
   }
 
@@ -2273,9 +3949,24 @@ async function handleBarberConversation(input: {
     });
 
     if (!appointment) {
+      const operationSummary =
+        "Nenhum agendamento futuro foi localizado para este numero. Informe isso ao cliente e ofereca novo agendamento.";
       return {
         intent,
-        text: "Nao encontrei agendamento futuro para cancelar com este numero.",
+        text: await renderReply(intent, operationSummary),
+      };
+    }
+
+    const remainingToStartMs = appointment.startsAt.getTime() - Date.now();
+    if (remainingToStartMs < CLIENT_CANCELLATION_MIN_LEAD_MS) {
+      const operationSummary = [
+        "Cancelamento nao permitido para este horario.",
+        `O agendamento inicia em ${formatDateTimeBr(appointment.startsAt)}.`,
+        "A politica permite cancelamento somente com antecedencia minima de 1 hora.",
+      ].join("\n");
+      return {
+        intent,
+        text: await renderReply(intent, operationSummary),
       };
     }
 
@@ -2284,9 +3975,16 @@ async function handleBarberConversation(input: {
       data: { status: "canceled" },
     });
 
+    const operationSummary = [
+      "Agendamento cancelado com sucesso.",
+      `Servico: ${appointment.service.name}.`,
+      `Horario: ${formatDateTimeBr(appointment.startsAt)}.`,
+      `Recurso: ${appointment.barber.name}.`,
+    ].join("\n");
+
     return {
       intent,
-      text: `Agendamento cancelado com sucesso: ${appointment.service.name} em ${formatDateTimeBr(appointment.startsAt)} com ${appointment.barber.name}.`,
+      text: await renderReply(intent, operationSummary),
     };
   }
 
@@ -2309,26 +4007,65 @@ async function handleBarberConversation(input: {
     ]);
 
     if (services.length === 0 || barbers.length === 0) {
+      const operationSummary =
+        "Nao foi possivel concluir o agendamento porque faltam servicos ativos ou recursos ativos cadastrados.";
       return {
         intent,
-        text: "Nao foi possivel agendar agora porque faltam servicos ou barbeiros ativos no sistema.",
+        text: await renderReply(intent, operationSummary),
       };
     }
 
     const message = input.incoming.text || "";
-    const parsedName = extractClientName(message);
+    const parsedName = parsedCustomerName;
     const parsedService = findByNameInText(message, services);
     const draftService = triageState?.serviceId ? services.find((item) => item.id === triageState.serviceId) ?? null : null;
-    const service = parsedService ?? draftService ?? null;
+    const singleService = services.length === 1 ? services[0] ?? null : null;
+    const service = parsedService ?? draftService ?? singleService;
     const preferredBarber = findByNameInText(message, barbers);
-    const clientName = parsedName ?? triageState?.clientName ?? null;
+    const clientName = parsedName ?? rememberedClientName ?? null;
 
-    let startsAt = parseBarberDateTime(message);
-    if (!startsAt && triageState?.startsAtIso) {
+    const parsedStartsAt = parseBarberDateTime(message);
+    let draftStartsAt: Date | null = null;
+    if (triageState?.startsAtIso) {
       const parsed = new Date(triageState.startsAtIso);
       if (!Number.isNaN(parsed.getTime())) {
-        startsAt = parsed;
+        draftStartsAt = parsed;
       }
+    }
+
+    let startsAt: Date | null = parsedStartsAt;
+    if (!startsAt && parsedDateOnly && parsedTimeOnly) {
+      startsAt = buildBarberDateTime(
+        parsedDateOnly.year,
+        parsedDateOnly.month,
+        parsedDateOnly.day,
+        parsedTimeOnly.hour,
+        parsedTimeOnly.minute,
+      );
+    }
+    if (!startsAt && parsedDateOnly && draftStartsAt) {
+      startsAt = buildBarberDateTime(
+        parsedDateOnly.year,
+        parsedDateOnly.month,
+        parsedDateOnly.day,
+        draftStartsAt.getHours(),
+        draftStartsAt.getMinutes(),
+      );
+    }
+    if (!startsAt && parsedTimeOnly && draftStartsAt) {
+      startsAt = buildBarberDateTime(
+        draftStartsAt.getFullYear(),
+        draftStartsAt.getMonth() + 1,
+        draftStartsAt.getDate(),
+        parsedTimeOnly.hour,
+        parsedTimeOnly.minute,
+      );
+    }
+    if (!startsAt && parsedTimeOnly) {
+      startsAt = resolveNearestFutureFromTime(parsedTimeOnly);
+    }
+    if (!startsAt && draftStartsAt) {
+      startsAt = draftStartsAt;
     }
 
     const missing = buildMissingBarberFields({
@@ -2342,6 +4079,7 @@ async function handleBarberConversation(input: {
         companyId: input.companyId,
         phone: clientPhone,
         clientName,
+        clientDocument: parsedCustomerDocument ?? undefined,
         serviceId: service?.id ?? null,
         startsAtIso: startsAt ? startsAt.toISOString() : null,
         lastIntent: "agendar",
@@ -2359,31 +4097,42 @@ async function handleBarberConversation(input: {
       }
 
       const lines: string[] = [];
-      if (collected.length > 0) {
-        lines.push(`Ja identifiquei: ${collected.join(" | ")}.`);
-      }
-      lines.push("Para concluir seu agendamento, preciso de:");
       if (missing.includes("nome")) {
-        lines.push("- Seu nome completo.");
-      }
-      if (missing.includes("servico")) {
-        const preview = services.slice(0, 6).map((item) => item.name).join(", ");
-        lines.push(`- Servico desejado. Opcoes: ${preview}.`);
-      }
-      if (missing.includes("horario")) {
-        lines.push("- Data e horario. Ex: 20/02/2026 14:30.");
+        lines.push("Antes de concluir seu agendamento, preciso registrar seu nome completo.");
+        if (service) {
+          lines.push(`Servico identificado: ${service.name}.`);
+        }
+        if (startsAt) {
+          lines.push(`Horario identificado: ${formatDateTimeBr(startsAt)}.`);
+        }
+        lines.push("- Responda apenas com seu nome.");
+      } else {
+        if (collected.length > 0) {
+          lines.push(`Ja identifiquei: ${collected.join(" | ")}.`);
+        }
+        lines.push("Para concluir seu agendamento, preciso de:");
+        if (missing.includes("servico")) {
+          const preview = services.slice(0, 6).map((item) => item.name).join(", ");
+          lines.push(`- Servico desejado. Opcoes: ${preview}.`);
+        }
+        if (missing.includes("horario")) {
+          lines.push("- Data e horario. Ex: 20/02/2026 14:30.");
+        }
       }
 
+      const operationSummary = lines.join("\n");
       return {
         intent,
-        text: lines.join("\n"),
+        text: await renderReply(intent, operationSummary, { forcePending: true }),
       };
     }
 
     if (!startsAt || !service || !clientName) {
+      const operationSummary =
+        "Os dados enviados para agendamento ficaram incompletos ou invalidos. Solicitar novamente nome, servico e data/hora.";
       return {
         intent,
-        text: "Nao consegui validar os dados do agendamento. Envie nome, servico e horario novamente.",
+        text: await renderReply(intent, operationSummary),
       };
     }
 
@@ -2397,9 +4146,11 @@ async function handleBarberConversation(input: {
         lastIntent: "agendar",
       });
 
+      const operationSummary =
+        "O horario enviado ja passou. Solicitar ao cliente um novo horario futuro para concluir o agendamento.";
       return {
         intent,
-        text: "O horario informado ja passou. Me envie um novo horario futuro para concluir o agendamento.",
+        text: await renderReply(intent, operationSummary),
       };
     }
 
@@ -2412,9 +4163,11 @@ async function handleBarberConversation(input: {
     }
 
     if (!barber) {
+      const operationSummary =
+        "Nao foi encontrado recurso disponivel para o servico solicitado neste momento. Solicitar ao cliente outro servico ou horario.";
       return {
         intent,
-        text: "Nao encontrei barbeiro disponivel para este servico.",
+        text: await renderReply(intent, operationSummary),
       };
     }
 
@@ -2441,9 +4194,11 @@ async function handleBarberConversation(input: {
         lastIntent: "agendar",
       });
 
+      const operationSummary =
+        "O horario solicitado esta fora da grade configurada do recurso. Solicitar ao cliente um novo horario dentro da disponibilidade.";
       return {
         intent,
-        text: "Este horario esta fora da agenda configurada do barbeiro. Me informe outro horario para tentar novamente.",
+        text: await renderReply(intent, operationSummary),
       };
     }
 
@@ -2468,15 +4223,45 @@ async function handleBarberConversation(input: {
         lastIntent: "agendar",
       });
 
+      const operationSummary =
+        "O horario solicitado ja esta ocupado para este recurso. Solicitar ao cliente outro horario disponivel.";
       return {
         intent,
-        text: "Este horario ja esta ocupado. Pode me informar outro horario?",
+        text: await renderReply(intent, operationSummary),
       };
+    }
+
+    if (!knownCustomer && clientName) {
+      const candidateDocument = parsedCustomerDocument ?? triageState?.clientDocument ?? null;
+      if (candidateDocument) {
+        const normalizedDocument = validateAndNormalizeCustomerDocument(candidateDocument);
+        if (normalizedDocument) {
+          knownCustomer = await prisma.bookingCustomer.upsert({
+            where: {
+              companyId_document: {
+                companyId: input.companyId,
+                document: normalizedDocument.normalized,
+              },
+            },
+            update: {
+              name: clientName,
+              phoneE164: clientPhone,
+            },
+            create: {
+              companyId: input.companyId,
+              name: clientName,
+              document: normalizedDocument.normalized,
+              phoneE164: clientPhone,
+            },
+          });
+        }
+      }
     }
 
     const appointment = await prisma.barberAppointment.create({
       data: {
         companyId: input.companyId,
+        bookingCustomerId: knownCustomer?.id ?? null,
         barberId: barber.id,
         serviceId: service.id,
         clientName,
@@ -2490,17 +4275,34 @@ async function handleBarberConversation(input: {
 
     await clearBarberTriageState(input.companyId, clientPhone, { lastIntent: "agendar", userName: clientName });
 
+    const operationSummary = [
+      "Agendamento confirmado com sucesso.",
+      `Cliente: ${clientName}.`,
+      `Servico: ${service.name}.`,
+      `Recurso: ${barber.name}.`,
+      `Horario: ${formatDateTimeBr(appointment.startsAt)}.`,
+      knownCustomer
+        ? "Cliente vinculado ao cadastro de fidelidade."
+        : "Para ativar o cartao fidelidade, o cliente pode enviar CPF/CNPJ apos o atendimento.",
+    ].join("\n");
+
     return {
       intent,
-      text: [
-        "Agendamento confirmado!",
-        `Cliente: ${clientName}`,
-        `Servico: ${service.name}`,
-        `Barbeiro: ${barber.name}`,
-        `Horario: ${formatDateTimeBr(appointment.startsAt)}`,
-        "",
-        "Se precisar, envie: cancelar agendamento",
-      ].join("\n"),
+      text: await renderReply(intent, operationSummary),
+    };
+  }
+
+  if (isGreetingMessage) {
+    const operationSummary = [
+      rememberedClientName
+        ? `Ola, ${rememberedClientName}! Estou pronto para te ajudar com seu atendimento.`
+        : "Ola! Estou pronto para te ajudar com seu atendimento.",
+      "Voce pode enviar: servicos, agendar, agenda, cancelar, recibo ou fidelidade.",
+    ].join("\n");
+
+    return {
+      intent: "ajuda",
+      text: await renderReply("ajuda", operationSummary),
     };
   }
 
@@ -2523,19 +4325,18 @@ async function handleBarberConversation(input: {
     }),
   ]);
 
+  const operationSummary = [
+    "Atendimento de agendamento pronto para ajudar o cliente.",
+    `Servicos ativos no sistema: ${servicesCount}.`,
+    `Agendamentos futuros do cliente: ${upcomingCount}.`,
+    "Se necessario, orientar comandos: servicos, agendar, agenda, cancelar agendamento, recibo e fidelidade.",
+  ]
+    .join("\n")
+    .trim();
+
   return {
     intent: "ajuda",
-    text: [
-      "Posso te ajudar com agendamentos da barbearia.",
-      `Servicos ativos: ${servicesCount}.`,
-      `Seus agendamentos futuros: ${upcomingCount}.`,
-      "",
-      "Comandos uteis:",
-      "- servicos",
-      "- agendar <servico> <dd/mm/aaaa hh:mm>",
-      "- agenda",
-      "- cancelar agendamento",
-    ].join("\n"),
+    text: await renderReply("ajuda", operationSummary),
   };
 }
 
@@ -2545,27 +4346,67 @@ async function sendAndLog(
   text: string,
   intent?: string,
   instanceName?: string,
+  attachment?: OutgoingAttachment,
 ): Promise<void> {
+  const content = attachment
+    ? buildStoredMessageContent({
+        text,
+        attachment: {
+          fileName: attachment.fileName,
+          mimeType: attachment.mimeType,
+          mediaType: attachment.mediaType,
+          base64: attachment.base64,
+        },
+      })
+    : text;
+
   const outLog = await prisma.messageLog.create({
     data: {
       companyId,
       phoneE164: phone,
       direction: "out",
-      messageType: "text",
-      content: text,
+      messageType: attachment ? "media" : "text",
+      content,
       intent,
       status: "received",
     },
   });
 
-  await outboundDispatchService.enqueueOutboundText({
-    companyId,
-    phone,
-    text,
-    intent,
-    instanceName,
-    messageLogId: outLog.id,
-  });
+  if (attachment) {
+    try {
+      await evolutionService.sendDocument(
+        phone,
+        {
+          base64: attachment.base64,
+          fileName: attachment.fileName,
+          mimeType: attachment.mimeType,
+          caption: text,
+        },
+        instanceName,
+      );
+
+      await prisma.messageLog.update({
+        where: { id: outLog.id },
+        data: { status: "processed" },
+      });
+    } catch (error) {
+      await prisma.messageLog.update({
+        where: { id: outLog.id },
+        data: { status: "failed" },
+      });
+
+      throw error;
+    }
+  } else {
+    await outboundDispatchService.enqueueOutboundText({
+      companyId,
+      phone,
+      text,
+      intent,
+      instanceName,
+      messageLogId: outLog.id,
+    });
+  }
 
   try {
     await appendConversationMessage({
@@ -2674,7 +4515,9 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
       return reply.send({ ok: true, ignored: "agent_own_number" });
     }
 
-    const skipAllowList = Boolean(companyByInstance && companyByInstance.aiType === "barber_booking");
+    const skipAllowList = Boolean(
+      companyByInstance && (companyByInstance.aiType === "barber_booking" || companyByInstance.aiType === "billing"),
+    );
     const allowedMapping = skipAllowList ? null : await findAuthorizedMapping(incoming.phoneCandidates);
 
     if (!skipAllowList && !allowedMapping) {
@@ -2694,7 +4537,9 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
     const mappedCompany = companyByInstance ?? allowedMapping!.company;
     const mappedCompanyId = companyByInstance ? companyByInstance.id : allowedMapping!.companyId;
     const replyInstanceName =
-      mappedCompany.aiType === "barber_booking" ? mappedCompany.evolutionInstanceName || instanceName || undefined : undefined;
+      mappedCompany.aiType === "barber_booking" || mappedCompany.aiType === "billing"
+        ? mappedCompany.evolutionInstanceName || instanceName || undefined
+        : undefined;
 
     request.log.info(
       {
@@ -2713,13 +4558,29 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
       "Webhook processado",
     );
 
+    const inboundText = incoming.text || "[arquivo recebido]";
+    const inboundMediaPayload = incoming.hasMedia
+      ? await resolveIncomingMediaPayload(incoming, replyInstanceName).catch(() => null)
+      : null;
+    const inboundContent = inboundMediaPayload
+      ? buildStoredMessageContent({
+          text: inboundText,
+          attachment: {
+            fileName: inboundMediaPayload.fileName,
+            mimeType: inboundMediaPayload.mimeType,
+            mediaType: inboundMediaPayload.mediaType,
+            base64: inboundMediaPayload.base64,
+          },
+        })
+      : inboundText;
+
     const inLog = await prisma.messageLog.create({
       data: {
         companyId: mappedCompanyId,
         phoneE164: replyPhone,
         direction: "in",
         messageType: incoming.messageType,
-        content: incoming.text || "[arquivo]",
+        content: inboundContent,
         status: "received",
       },
     });
@@ -2729,7 +4590,7 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
         companyId: mappedCompanyId,
         phone: replyPhone,
         role: "user",
-        text: incoming.text || "[arquivo]",
+        text: inboundText,
       });
     } catch {
       // Memoria conversacional nao deve interromper o fluxo principal.
@@ -2739,7 +4600,7 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
       if (mappedCompany.aiType === "barber_booking") {
         if (incoming.hasMedia && !incoming.text) {
           const text =
-            "Recebi seu arquivo, mas para este servico de barbearia eu processo mensagens de texto. Envie servicos, agenda ou agendar <servico> <data hora>.";
+            "Recebi seu arquivo, mas neste servico de agendamento eu processo mensagens de texto. Envie servicos, agenda ou agendar <servico> <data hora>.";
           await sendAndLog(mappedCompanyId, replyPhone, text, "ajuda", replyInstanceName);
 
           await prisma.messageLog.update({
@@ -2754,13 +4615,20 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
           return reply.send({ ok: true, intent: "ajuda" });
         }
 
-        const barberReply = await handleBarberConversation({
+        const barberReply = await handleBarberToolAgentConversation({
           companyId: mappedCompanyId,
           incoming,
           replyPhone,
         });
 
-        await sendAndLog(mappedCompanyId, replyPhone, barberReply.text, barberReply.intent, replyInstanceName);
+        await sendAndLog(
+          mappedCompanyId,
+          replyPhone,
+          barberReply.text,
+          barberReply.intent,
+          replyInstanceName,
+          barberReply.attachment,
+        );
 
         await prisma.messageLog.update({
           where: { id: inLog.id },
@@ -2772,6 +4640,27 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
 
         await markWebhookEvent("processed", mappedCompanyId);
         return reply.send({ ok: true, intent: barberReply.intent });
+      }
+
+      if (mappedCompany.aiType === "billing") {
+        const billingReply = await handleBillingToolAgentConversation({
+          companyId: mappedCompanyId,
+          incoming,
+          replyPhone,
+        });
+
+        await sendAndLog(mappedCompanyId, replyPhone, billingReply.text, billingReply.intent, replyInstanceName);
+
+        await prisma.messageLog.update({
+          where: { id: inLog.id },
+          data: {
+            status: "processed",
+            intent: billingReply.intent,
+          },
+        });
+
+        await markWebhookEvent("processed", mappedCompanyId);
+        return reply.send({ ok: true, intent: billingReply.intent });
       }
 
       if (incoming.isXml || incoming.hasMedia) {
@@ -3133,7 +5022,9 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/webhooks/evolution/messages", handleMessagesWebhook);
   app.post("/webhooks/evolution/messages-upsert", handleMessagesWebhook);
+  app.post("/webhooks/evolution/messages-upsert/:event", handleMessagesWebhook);
   app.post("/webhooks/evolution/messages.upsert", handleMessagesWebhook);
+  app.post("/webhooks/evolution/messages.upsert/:event", handleMessagesWebhook);
   app.post("/webhooks/evolution/messages/:event", handleMessagesWebhook);
   app.post("/webhooks/evolution", handleMessagesWebhook);
 

@@ -147,14 +147,40 @@ export default function App() {
     }
 
     if (session.user.serviceType === "barber_booking") {
+      const bookingSector = session.user.bookingSector || "barber";
+      const companyTitle =
+        bookingSector === "car_wash"
+          ? "Painel do Lava Jato"
+          : bookingSector === "clinic"
+            ? "Painel da Clinica"
+            : bookingSector === "generic"
+              ? "Painel de Agendamentos"
+              : "Painel da Barbearia";
+      const resourceLabel =
+        bookingSector === "car_wash"
+          ? "Boxes/Vagas"
+          : bookingSector === "clinic"
+            ? "Profissionais"
+            : bookingSector === "generic"
+              ? "Recursos"
+              : "Barbeiros";
+      const dashboardSubtitle =
+        bookingSector === "car_wash"
+          ? "Resumo de servicos, boxes/vagas e agenda"
+          : bookingSector === "clinic"
+            ? "Resumo de servicos, profissionais e agenda"
+            : bookingSector === "generic"
+              ? "Resumo de servicos, recursos e agenda"
+              : "Resumo de servicos, barbeiros e agenda";
+
       const barberCompanyTitles: Record<string, { title: string; subtitle: string }> = {
         dashboard: {
-          title: "Painel da Barbearia",
-          subtitle: "Resumo de servicos, barbeiros e agenda",
+          title: companyTitle,
+          subtitle: dashboardSubtitle,
         },
         barbers: {
-          title: "Barbeiros",
-          subtitle: "Cadastre profissionais e grade de horarios",
+          title: resourceLabel,
+          subtitle: "Cadastre recursos e grade de horarios",
         },
         services: {
           title: "Servicos",
