@@ -108,13 +108,26 @@ export function Sidebar({
   onCloseMobile,
 }: SidebarProps) {
   const navItems = getNavItems(session);
+  const bookingSector = session.user.bookingSector || "generic";
+  const bookingRoleLabel =
+    bookingSector === "car_wash"
+      ? "Empresa Lava Jato"
+      : bookingSector === "clinic"
+        ? "Empresa Clinica"
+        : "Empresa de Agendamento";
+  const bookingRoleSubtitle =
+    bookingSector === "car_wash"
+      ? "Agente de agendamento para lava jato"
+      : bookingSector === "clinic"
+        ? "Agente de agendamento para clinica"
+        : "Agente de agendamento";
   const roleLabel =
     session.user.role === "admin"
       ? "Administrador"
       : session.user.role === "barber"
         ? "Barbeiro"
         : session.user.serviceType === "barber_booking"
-          ? "Empresa Barbearia"
+          ? bookingRoleLabel
           : session.user.serviceType === "billing"
             ? "Gestão de Cobranças"
             : "Empresa NF-e";
@@ -124,7 +137,7 @@ export function Sidebar({
       : session.user.role === "barber"
         ? "Agenda pessoal"
         : session.user.serviceType === "barber_booking"
-          ? "Agente de agendamento"
+          ? bookingRoleSubtitle
           : session.user.serviceType === "billing"
             ? "Cobranças e CRM inteligente"
             : "Gestao inteligente de NF-e";
