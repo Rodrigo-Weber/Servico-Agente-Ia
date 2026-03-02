@@ -1,12 +1,16 @@
 import cron, { ScheduledTask } from "node-cron";
 import { runHourlyNfeSync, runDailyImportSummaryJob } from "./hourly-sync.js";
 import { runBillingAdvanceRemindersJob } from "./billing-reminder.job.js";
+import { runAppointmentRemindersJob } from "./appointment-reminder.job.js";
+import { runNfeStaleAlertJob } from "./nfe-stale-alert.job.js";
 import { appConfigService } from "../../services/app-config.service.js";
 import { env } from "../../config/env.js";
 
 const HOURLY_SYNC_CRON = "1 * * * *";
 const DAILY_DIGEST_CRON = "0 0 18 * * *";
 const DAILY_BILLING_REMINDER_CRON = "0 0 9 * * *";
+const APPOINTMENT_REMINDER_CRON = "0 */30 * * * *"; // A cada 30 minutos
+const NFE_STALE_ALERT_CRON = "0 0 */2 * * *"; // A cada 2 horas
 const SCHEDULE_TIMEZONE = "America/Sao_Paulo";
 
 interface SchedulerOptions {
@@ -82,6 +86,34 @@ export async function startHourlyNfeScheduler(options: SchedulerOptions = {}): P
     },
   );
 
+  const appointmentReminderTask = cron.schedule(
+    APPOINTMENT_REMINDER_CRON,
+    async () => {
+      try {
+        await runAppointmentRemindersJob();
+      } catch (error) {
+        console.error(`${tag} falha nos lembretes de agendamento`, error);
+      }
+    },
+    {
+      timezone: SCHEDULE_TIMEZONE,
+    },
+  );
+
+  const nfeStaleAlertTask = cron.schedule(
+    NFE_STALE_ALERT_CRON,
+    async () => {
+      try {
+        await runNfeStaleAlertJob();
+      } catch (error) {
+        console.error(`${tag} falha no alerta de notas NF-e stale`, error);
+      }
+    },
+    {
+      timezone: SCHEDULE_TIMEZONE,
+    },
+  );
+
   let syncMinIntervalSeconds = env.SYNC_MIN_INTERVAL_SECONDS;
   try {
     const settings = await appConfigService.getSettings();
@@ -92,7 +124,7 @@ export async function startHourlyNfeScheduler(options: SchedulerOptions = {}): P
   }
 
   console.log(
-    `${tag} agendadores iniciados (Sync: ${HOURLY_SYNC_CRON}, Resumo: ${DAILY_DIGEST_CRON}, Cobranca: ${DAILY_BILLING_REMINDER_CRON} ${SCHEDULE_TIMEZONE})`,
+    `${tag} agendadores iniciados (Sync: ${HOURLY_SYNC_CRON}, Resumo: ${DAILY_DIGEST_CRON}, Cobranca: ${DAILY_BILLING_REMINDER_CRON}, Agendamentos: ${APPOINTMENT_REMINDER_CRON}, NfeStale: ${NFE_STALE_ALERT_CRON} ${SCHEDULE_TIMEZONE})`,
   );
 
   if (runOnStart) {
@@ -103,5 +135,5 @@ export async function startHourlyNfeScheduler(options: SchedulerOptions = {}): P
     }
   }
 
-  return [syncTask, digestTask, billingReminderTask];
+  return [syncTask, digestTask, billingReminderTask, appointmentReminderTask, nfeStaleAlertTask];
 }

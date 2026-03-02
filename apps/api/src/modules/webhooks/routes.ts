@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
 import { normalizePhone } from "../../lib/phone.js";
-import { aiService, type AgentConversationMessage } from "../../services/ai.service.js";
+import { aiService, type AgentConversationMessage, type BarberIntentResult } from "../../services/ai.service.js";
 import { evolutionService } from "../../services/evolution.service.js";
 import { importNfeXml } from "../../services/nfe-import.service.js";
 import { appConfigService } from "../../services/app-config.service.js";
@@ -578,12 +578,22 @@ interface BarberConversationReply {
   attachment?: OutgoingAttachment;
 }
 
+interface PendingBookConfirm {
+  barberId: string;
+  serviceId: string;
+  startsAtIso: string;
+}
+
 interface BarberTriageState {
   clientName: string | null;
   clientDocument: string | null;
   serviceId: string | null;
   startsAtIso: string | null;
   lastIntent: BarberIntent | null;
+  /** ID do agendamento aguardando confirmação de cancelamento */
+  pendingCancelId: string | null;
+  /** Dados do agendamento aguardando confirmação antes de criar */
+  pendingBookConfirm: PendingBookConfirm | null;
 }
 
 interface ConversationMessageMemory {
@@ -606,6 +616,8 @@ interface NfeConversationState {
   listedNotes: NfeReferenceMemory[];
   selectedChave: string | null;
   updatedAtIso: string;
+  /** Aguardando confirmação explícita do usuário para importar notas detectadas */
+  pendingImport?: boolean;
 }
 
 interface NfeDetailView {
@@ -632,13 +644,16 @@ interface ConversationContextPayload {
       serviceId: string | null;
       startsAtIso: string | null;
       updatedAtIso: string;
+      pendingCancelId?: string | null;
+      pendingBookConfirm?: PendingBookConfirm | null;
     };
   };
   nfe?: NfeConversationState;
   recentMessages?: ConversationMessageMemory[];
 }
 
-const BARBER_TRIAGE_TTL_MS = 6 * 60 * 60 * 1000;
+// TTL aumentado para 24h — evita perda de contexto em sessões longas
+const BARBER_TRIAGE_TTL_MS = 24 * 60 * 60 * 1000;
 const NFE_CONTEXT_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_CONVERSATION_MESSAGES = 20;
 const MAX_NFE_LISTED_NOTES = 10;
@@ -661,6 +676,13 @@ function parseConversationContext(raw: unknown): ConversationContextPayload {
       ? (barberRaw.triage as Record<string, unknown>)
       : undefined;
 
+  const triagePendingBookRaw =
+    triageRaw?.pendingBookConfirm &&
+    typeof triageRaw.pendingBookConfirm === "object" &&
+    !Array.isArray(triageRaw.pendingBookConfirm)
+      ? (triageRaw.pendingBookConfirm as Record<string, unknown>)
+      : null;
+
   const triage =
     triageRaw
       ? {
@@ -669,6 +691,18 @@ function parseConversationContext(raw: unknown): ConversationContextPayload {
           serviceId: typeof triageRaw.serviceId === "string" ? triageRaw.serviceId : null,
           startsAtIso: typeof triageRaw.startsAtIso === "string" ? triageRaw.startsAtIso : null,
           updatedAtIso: typeof triageRaw.updatedAtIso === "string" ? triageRaw.updatedAtIso : new Date(0).toISOString(),
+          pendingCancelId: typeof triageRaw.pendingCancelId === "string" ? triageRaw.pendingCancelId : null,
+          pendingBookConfirm:
+            triagePendingBookRaw &&
+            typeof triagePendingBookRaw.barberId === "string" &&
+            typeof triagePendingBookRaw.serviceId === "string" &&
+            typeof triagePendingBookRaw.startsAtIso === "string"
+              ? {
+                  barberId: triagePendingBookRaw.barberId,
+                  serviceId: triagePendingBookRaw.serviceId,
+                  startsAtIso: triagePendingBookRaw.startsAtIso,
+                }
+              : null,
         }
       : undefined;
 
@@ -717,6 +751,7 @@ function parseConversationContext(raw: unknown): ConversationContextPayload {
             ? nfeRaw.selectedChave.trim()
             : null,
         updatedAtIso: typeof nfeRaw.updatedAtIso === "string" ? nfeRaw.updatedAtIso : new Date(0).toISOString(),
+        pendingImport: nfeRaw.pendingImport === true,
       }
     : undefined;
 
@@ -872,6 +907,8 @@ async function getBarberTriageState(companyId: string, phone: string): Promise<B
       serviceId: null,
       startsAtIso: null,
       lastIntent: null,
+      pendingCancelId: null,
+      pendingBookConfirm: null,
     };
   }
 
@@ -886,11 +923,14 @@ async function getBarberTriageState(companyId: string, phone: string): Promise<B
     clientDocument: triage.clientDocument ?? null,
     serviceId: triage.serviceId,
     startsAtIso: triage.startsAtIso,
+    pendingCancelId: triage.pendingCancelId ?? null,
+    pendingBookConfirm: triage.pendingBookConfirm ?? null,
     lastIntent:
       memory?.lastIntent === "agendar" ||
       memory?.lastIntent === "recibo" ||
-      memory?.lastIntent === "fidelidade"
-        ? memory.lastIntent
+      memory?.lastIntent === "fidelidade" ||
+      memory?.lastIntent === "cancelar"
+        ? (memory.lastIntent as BarberIntent)
         : null,
   };
 }
@@ -937,6 +977,8 @@ async function upsertBarberTriageState(input: {
   serviceId?: string | null;
   startsAtIso?: string | null;
   lastIntent?: string;
+  pendingCancelId?: string | null;
+  pendingBookConfirm?: PendingBookConfirm | null;
 }): Promise<void> {
   await withConversationMemory(input.companyId, input.phone, (context) => {
     const currentTriage = context.barber?.triage;
@@ -945,6 +987,10 @@ async function upsertBarberTriageState(input: {
       input.clientDocument === undefined ? currentTriage?.clientDocument ?? null : input.clientDocument;
     const nextServiceId = input.serviceId === undefined ? currentTriage?.serviceId ?? null : input.serviceId;
     const nextStartsAtIso = input.startsAtIso === undefined ? currentTriage?.startsAtIso ?? null : input.startsAtIso;
+    const nextPendingCancelId =
+      input.pendingCancelId === undefined ? (currentTriage?.pendingCancelId ?? null) : input.pendingCancelId;
+    const nextPendingBookConfirm =
+      input.pendingBookConfirm === undefined ? (currentTriage?.pendingBookConfirm ?? null) : input.pendingBookConfirm;
 
     return {
       context: {
@@ -957,6 +1003,8 @@ async function upsertBarberTriageState(input: {
             serviceId: nextServiceId,
             startsAtIso: nextStartsAtIso,
             updatedAtIso: new Date().toISOString(),
+            pendingCancelId: nextPendingCancelId,
+            pendingBookConfirm: nextPendingBookConfirm,
           },
         },
       },
@@ -1055,23 +1103,26 @@ async function rememberNfeConversation(input: {
   phone: string;
   listedNotes?: NfeReferenceMemory[];
   selectedChave?: string | null;
+  pendingImport?: boolean;
 }): Promise<void> {
   await withConversationMemory(input.companyId, input.phone, (context) => {
     const current = context.nfe;
     const nextListed = input.listedNotes === undefined ? current?.listedNotes ?? [] : input.listedNotes;
     const nextSelected = input.selectedChave === undefined ? current?.selectedChave ?? null : input.selectedChave;
+    const nextPendingImport = input.pendingImport === undefined ? (current?.pendingImport ?? false) : input.pendingImport;
 
     const nextContext: ConversationContextPayload = {
       ...context,
     };
 
-    if (nextListed.length === 0 && !nextSelected) {
+    if (nextListed.length === 0 && !nextSelected && !nextPendingImport) {
       delete nextContext.nfe;
     } else {
       nextContext.nfe = {
         listedNotes: nextListed.slice(0, MAX_NFE_LISTED_NOTES),
         selectedChave: nextSelected,
         updatedAtIso: new Date().toISOString(),
+        ...(nextPendingImport ? { pendingImport: true } : {}),
       };
     }
 
@@ -1080,6 +1131,14 @@ async function rememberNfeConversation(input: {
       lastActivityAt: new Date(),
     };
   });
+}
+
+async function safeSetNfePendingImport(companyId: string, phone: string): Promise<void> {
+  try {
+    await rememberNfeConversation({ companyId, phone, pendingImport: true });
+  } catch {
+    // Não deve quebrar o fluxo principal
+  }
 }
 
 async function safeRememberNfeConversation(input: {
@@ -1707,6 +1766,56 @@ async function handleNfeToolAgentConversation(input: {
   phone: string;
   userMessage: string;
 }): Promise<string> {
+  // Guard: saudação pura não aciona ferramentas
+  if (isGreetingOnlyMessage(input.userMessage)) {
+    const greetingReply = [
+      "Ola! Sou seu assistente fiscal.",
+      "Posso te ajudar a consultar notas fiscais, ver detalhes de NF-e e importar documentos detectados.",
+      "E so me perguntar!",
+    ].join(" ");
+
+    await appendConversationMessage({ companyId: input.companyId, phone: input.phone, role: "user", text: input.userMessage });
+    await appendConversationMessage({ companyId: input.companyId, phone: input.phone, role: "assistant", text: greetingReply, intent: "ajuda" });
+    return greetingReply;
+  }
+
+  // Guard: usuário confirmou importação pendente — executa diretamente sem passar pelo agente
+  const nfeState = await getNfeConversationState(input.companyId, input.phone);
+  if (nfeState?.pendingImport && isPositiveConfirmation(input.userMessage)) {
+    const result = await prisma.nfeDocument.updateMany({
+      where: {
+        companyId: input.companyId,
+        status: "detected",
+      },
+      data: {
+        status: "imported",
+        importedAt: new Date(),
+      },
+    });
+
+    const recentReferences = await fetchRecentNfeReferences(input.companyId);
+    if (recentReferences.length > 0) {
+      await safeRememberNfeConversation({
+        companyId: input.companyId,
+        phone: input.phone,
+        listedNotes: recentReferences,
+        selectedChave: null,
+        pendingImport: false,
+      });
+    } else {
+      await safeClearNfeConversationState(input.companyId, input.phone);
+    }
+
+    const confirmReply =
+      result.count > 0
+        ? `Prontinho! ${result.count} nota(s) foram importadas com sucesso. Se precisar, posso listar as notas ou detalhar alguma delas.`
+        : "Nao havia notas detectadas para importar no momento. Se tiver duvidas, e so perguntar!";
+
+    await appendConversationMessage({ companyId: input.companyId, phone: input.phone, role: "user", text: input.userMessage });
+    await appendConversationMessage({ companyId: input.companyId, phone: input.phone, role: "assistant", text: confirmReply, intent: "importar" });
+    return confirmReply;
+  }
+
   const memory = await prisma.conversationMemory.findUnique({
     where: {
       companyId_phoneE164: {
@@ -1728,10 +1837,12 @@ async function handleNfeToolAgentConversation(input: {
     conversationHistory: history,
     systemInstruction: [
       "Voce e um agente de operacao fiscal conectado a ferramentas reais do sistema.",
-      "Sempre que precisar de dados, use ferramentas; nao responda no chute.",
+      "Sempre que precisar de dados fiscais, use ferramentas; nao responda no chute.",
       "Se houver ambiguidade de nota, peca confirmacao objetiva da referencia.",
       "Para acao de importar notas detectadas, so execute com confirm=true apos pedido explicito do usuario.",
       "Se o usuario perguntar o que voce faz, descreva suas capacidades reais no sistema.",
+      "Mantenha continuidade da conversa usando o historico disponivel.",
+      "Responda de forma natural e objetiva para WhatsApp, sem markdown.",
     ].join("\n"),
     tools: [
       {
@@ -1949,6 +2060,8 @@ async function handleNfeToolAgentConversation(input: {
         execute: async (args) => {
           const confirm = readBooleanArg(args, "confirm", false);
           if (!confirm) {
+            // Sinaliza pendingImport para retomar no próximo turno com confirmação simples
+            await safeSetNfePendingImport(input.companyId, input.phone);
             return toCompactJson({
               ok: false,
               importedCount: 0,
@@ -1974,6 +2087,7 @@ async function handleNfeToolAgentConversation(input: {
               phone: input.phone,
               listedNotes: recentReferences,
               selectedChave: null,
+              pendingImport: false,
             });
           } else {
             await safeClearNfeConversationState(input.companyId, input.phone);
@@ -2023,10 +2137,12 @@ async function handleBarberToolAgentConversation(input: {
     conversationHistory: history,
     systemInstruction: [
       "Voce e um agente operacional de agendamento conectado a ferramentas reais.",
-      "Para responder o cliente, execute SEMPRE a ferramenta booking_handle_request.",
+      "Se o cliente APENAS cumprimentar (oi, bom dia, boa tarde, etc.) sem nenhum pedido operacional, responda com uma saudacao natural e descreva brevemente o que voce pode fazer, SEM chamar nenhuma ferramenta.",
+      "Para qualquer pedido operacional (agendar, cancelar, ver servicos, recibo, fidelidade, agenda), execute a ferramenta booking_handle_request.",
       "Nao invente servicos, horarios, disponibilidade ou cadastro.",
       "Use booking_get_capabilities apenas para explicar o que o sistema faz.",
       "Se o cliente pedir cancelamento, aplique as regras reais de antecedencia do sistema.",
+      "Mantenha o tom natural e conversacional, como se fosse um atendente humano.",
     ].join("\n"),
     tools: [
       {
@@ -2098,10 +2214,10 @@ async function buildBillingFallbackReply(input: {
   const supplier = await findBillingSupplierByPhone(input.companyId, input.phoneCandidates);
   if (!supplier) {
     const lines = [
-      "Recebi sua mensagem no atendimento financeiro.",
-      input.hasMedia ? "Arquivo recebido no CRM com sucesso." : "",
-      "Nao consegui localizar seu cadastro por este numero.",
-      "Me informe CPF/CNPJ ou razao social para eu localizar seus documentos.",
+      "Ola! Seja bem-vindo(a) ao nosso atendimento financeiro.",
+      input.hasMedia ? "Arquivo recebido no sistema com sucesso." : "",
+      "Para te ajudar com boletos, vencimentos ou documentos, preciso localizar seu cadastro.",
+      "Por favor, informe seu *CPF*, *CNPJ* ou *razao social* para que eu possa te atender.",
     ]
       .filter(Boolean)
       .join("\n");
@@ -2146,7 +2262,7 @@ async function buildBillingFallbackReply(input: {
   ]);
 
   const lines = [
-    `Recebi sua mensagem, ${supplier.name}.`,
+    `Ola, ${supplier.name.split(" ")[0]}! Tudo bem?`,
     pendingCount > 0 || overdueCount > 0
       ? `Seus documentos em aberto: pendentes ${pendingCount} | vencidos ${overdueCount}.`
       : "No momento nao encontrei documentos pendentes ou vencidos para o seu cadastro.",
@@ -2155,7 +2271,7 @@ async function buildBillingFallbackReply(input: {
           Number(nextDocument.amount),
         )}) - ${formatBillingDocumentStatus(nextDocument.status)}.`
       : "",
-    "Se quiser, eu posso listar por mes ou por prazo de vencimento (30, 15 ou 7 dias).",
+    "Se quiser, eu posso listar tudo por mes, por prazo (30, 15 ou 7 dias) ou detalhar um boleto especifico.",
   ]
     .filter(Boolean)
     .join("\n");
@@ -2172,6 +2288,26 @@ async function handleBillingToolAgentConversation(input: {
   replyPhone: string;
 }): Promise<{ intent: BillingAgentIntent; text: string }> {
   const userMessage = (input.incoming.text || "").trim() || "Mensagem recebida no canal de cobranca.";
+
+  // Guard: saudação pura não aciona ferramentas de cobrança
+  if (isGreetingOnlyMessage(userMessage)) {
+    const normalizedReplyPhoneForGreeting = normalizePhone(input.replyPhone) || input.replyPhone;
+    const candidatesForGreeting = buildPhoneCandidates(normalizedReplyPhoneForGreeting);
+    const supplierForGreeting = await findBillingSupplierByPhone(input.companyId, candidatesForGreeting);
+    const greetingName = supplierForGreeting?.name ? supplierForGreeting.name.split(" ")[0] : null;
+
+    const greetingReply = [
+      greetingName ? `Ola, ${greetingName}!` : "Ola!",
+      "Sou seu assistente financeiro.",
+      "Posso te ajudar a consultar boletos, ver vencimentos, checar documentos pendentes e atualizar seus dados cadastrais.",
+      "Como posso te ajudar?",
+    ].join(" ");
+
+    await appendConversationMessage({ companyId: input.companyId, phone: input.replyPhone, role: "user", text: userMessage });
+    await appendConversationMessage({ companyId: input.companyId, phone: input.replyPhone, role: "assistant", text: greetingReply, intent: "crm_inbound" });
+    return { intent: "crm_inbound", text: greetingReply };
+  }
+
   const memory = await prisma.conversationMemory.findUnique({
     where: {
       companyId_phoneE164: {
@@ -2236,10 +2372,12 @@ async function handleBillingToolAgentConversation(input: {
     conversationHistory: history,
     systemInstruction: [
       "Voce e um agente de cobranca e CRM conectado a ferramentas reais do sistema.",
-      "Sempre use ferramentas para localizar cliente, documentos e vencimentos antes de responder.",
+      "Se o cliente apenas cumprimentar sem nenhum pedido especifico, responda de forma natural e apresente brevemente o que voce pode fazer, SEM chamar ferramentas.",
+      "Para localizar documentos, vencimentos ou cadastro, use as ferramentas disponíveis antes de responder.",
       "Nao invente valores, vencimentos, status ou codigo de documento.",
       "Se nao localizar o cliente pelo numero, peca CPF/CNPJ ou razao social.",
-      "Responda de forma natural e objetiva para WhatsApp.",
+      "Responda de forma natural, empática e objetiva para WhatsApp, como um atendente humano.",
+      "Mantenha continuidade da conversa usando o historico disponivel.",
     ].join("\n"),
     tools: [
       {
@@ -2413,6 +2551,8 @@ async function handleBillingToolAgentConversation(input: {
 
           return toCompactJson({
             ok: true,
+            _instrucao:
+              "Ao exibir documentos com codigoBarras, apresente o codigo em linha separada com o prefixo 'Codigo de barras:'. Inclua a soma total dos valores ao listar multiplos documentos.",
             cliente: {
               id: supplier.id,
               nome: supplier.name,
@@ -2426,6 +2566,8 @@ async function handleBillingToolAgentConversation(input: {
               limit,
             },
             total: documents.length,
+            totalValor: documents.reduce((sum, d) => sum + Number(d.amount), 0),
+            totalValorFmt: formatCurrency(documents.reduce((sum, d) => sum + Number(d.amount), 0)),
             documentos: documents.map((document) => ({
               id: document.id,
               chave: document.externalKey,
@@ -2794,6 +2936,17 @@ function looksLikeStandaloneName(message: string): boolean {
     "corte",
     "hoje",
     "amanha",
+    // Saudações — nunca devem ser interpretadas como nome
+    "bom",
+    "boa",
+    "oi",
+    "ola",
+    "opa",
+    "eai",
+    "tudo",
+    "blz",
+    "salve",
+    "beleza",
   ];
   if (blockedTokens.some((token) => normalized.includes(token))) {
     return false;
@@ -3121,10 +3274,80 @@ function formatDateTimeBr(value: Date): string {
   }).format(value);
 }
 
+function getSectorVocabulary(sector: string | null | undefined) {
+  switch (sector) {
+    case "car_wash":
+      return {
+        profissional: "lavador",
+        profissional_art: "o lavador",
+        servico: "lavagem",
+        servico_pl: "lavagens",
+        agendamento: "reserva",
+        agendamento_pl: "reservas",
+        agendado: "Reserva confirmada",
+        cancelado: "Reserva cancelada",
+        atendimento_pl: "lavagens",
+        cartao: "cartao de lavagens",
+        premio: "1 lavagem gratuita",
+        greeting_opcoes:
+          "ver tipos de lavagem e precos, fazer uma reserva, consultar sua agenda, cancelar reserva ou ver pontos de fidelidade",
+        emoji: "🚗",
+        recibo_label: "Recibo de lavagem",
+      };
+    case "clinic":
+      return {
+        profissional: "profissional",
+        profissional_art: "o profissional",
+        servico: "consulta",
+        servico_pl: "consultas",
+        agendamento: "consulta",
+        agendamento_pl: "consultas",
+        agendado: "Consulta agendada",
+        cancelado: "Consulta cancelada",
+        atendimento_pl: "consultas",
+        cartao: "cartao fidelidade",
+        premio: "1 consulta gratuita",
+        greeting_opcoes:
+          "ver especialidades e precos, agendar uma consulta, consultar sua agenda, cancelar consulta, emitir recibo ou ver pontos de fidelidade",
+        emoji: "🏥",
+        recibo_label: "Recibo de consulta",
+      };
+    default:
+      return {
+        profissional: "barbeiro",
+        profissional_art: "o barbeiro",
+        servico: "servico",
+        servico_pl: "servicos",
+        agendamento: "agendamento",
+        agendamento_pl: "agendamentos",
+        agendado: "Agendamento confirmado",
+        cancelado: "Agendamento cancelado",
+        atendimento_pl: "atendimentos",
+        cartao: "cartao fidelidade",
+        premio: "1 servico gratuito",
+        greeting_opcoes:
+          "ver servicos e precos, fazer um agendamento, consultar sua agenda, cancelar horario, emitir recibo ou ver pontos de fidelidade",
+        emoji: "✂️",
+        recibo_label: "Recibo de servico",
+      };
+  }
+}
+
 function findByNameInText<T extends { name: string }>(message: string, items: T[]): T | null {
   const text = normalizeForMatch(message);
   const ordered = [...items].sort((a, b) => b.name.length - a.name.length);
-  return ordered.find((item) => text.includes(normalizeForMatch(item.name))) ?? null;
+  // Primeiro tenta correspondência exata por substring
+  const exact = ordered.find((item) => text.includes(normalizeForMatch(item.name)));
+  if (exact) return exact;
+  // Fallback: todos os tokens do nome (> 2 chars) devem aparecer no texto
+  return (
+    ordered.find((item) => {
+      const tokens = normalizeForMatch(item.name)
+        .split(/\s+/)
+        .filter((t) => t.length > 2);
+      return tokens.length > 0 && tokens.every((token) => text.includes(token));
+    }) ?? null
+  );
 }
 
 function buildMissingBarberFields(input: {
@@ -3347,6 +3570,82 @@ function isInsideWorkingWindow(
   });
 }
 
+/** Detecta confirmações positivas curtas do cliente ("sim", "pode", "ok", etc.) */
+function isPositiveConfirmation(message: string): boolean {
+  const norm = normalizeForMatch(message).trim();
+  const tokens = [
+    "sim", "s", "ok", "pode", "confirmo", "confirmado", "confirmar",
+    "vai", "claro", "isso", "exato", "certo", "positivo",
+    "yes", "yep", "ta", "ta bom", "ta certo", "ta otimo", "tudo certo",
+    "beleza", "quero", "quero sim", "manda", "pode confirmar", "pode fazer",
+    "concordo", "fechado", "combinado",
+  ];
+  return tokens.some((t) => norm === t || norm.startsWith(t + " ") || norm.startsWith(t + ","));
+}
+
+/** Encontra os próximos N slots livres para um profissional a partir de uma data. */
+async function findNextFreeSlots(input: {
+  companyId: string;
+  barberId: string;
+  durationMinutes: number;
+  afterDate: Date;
+  count?: number;
+}): Promise<Date[]> {
+  const count = input.count ?? 3;
+  const results: Date[] = [];
+
+  const windows = await prisma.barberWorkingHour.findMany({
+    where: { barberId: input.barberId, active: true },
+    select: { weekday: true, startTime: true, endTime: true },
+  });
+
+  if (windows.length === 0) {
+    return results;
+  }
+
+  const SLOT_STEP_MINUTES = 30;
+  const MAX_DAYS = 14;
+
+  // Arredonda para o próximo múltiplo de 30 min
+  let current = new Date(input.afterDate);
+  const mins = current.getMinutes();
+  const remainder = mins % SLOT_STEP_MINUTES;
+  if (remainder !== 0) {
+    current.setMinutes(mins + (SLOT_STEP_MINUTES - remainder), 0, 0);
+  } else {
+    current.setSeconds(0, 0);
+  }
+  // Avança pelo menos um passo para não retornar o mesmo horário conflitante
+  current = new Date(current.getTime() + SLOT_STEP_MINUTES * 60 * 1000);
+
+  const limit = new Date(input.afterDate.getTime() + MAX_DAYS * 24 * 60 * 60 * 1000);
+
+  while (current < limit && results.length < count) {
+    const slotEnd = new Date(current.getTime() + input.durationMinutes * 60 * 1000);
+
+    if (isInsideWorkingWindow(current, slotEnd, windows)) {
+      const overlap = await prisma.barberAppointment.findFirst({
+        where: {
+          companyId: input.companyId,
+          barberId: input.barberId,
+          status: "scheduled",
+          startsAt: { lt: slotEnd },
+          endsAt: { gt: current },
+        },
+        select: { id: true },
+      });
+
+      if (!overlap) {
+        results.push(new Date(current));
+      }
+    }
+
+    current = new Date(current.getTime() + SLOT_STEP_MINUTES * 60 * 1000);
+  }
+
+  return results;
+}
+
 async function handleBarberConversation(input: {
   companyId: string;
   incoming: IncomingData;
@@ -3354,15 +3653,49 @@ async function handleBarberConversation(input: {
 }): Promise<BarberConversationReply> {
   const clientPhone = normalizePhone(input.replyPhone) || input.replyPhone;
   const incomingUserMessage = (input.incoming.text || "").trim() || "Solicitacao de agendamento via WhatsApp";
-  const detectedIntent = detectBarberIntent(incomingUserMessage);
+
+  // Carrega histórico de conversa e estado de triagem para contextualizar a classificação
   const triageState = await getBarberTriageState(input.companyId, clientPhone);
+  const conversationMemoryRaw = await prisma.conversationMemory.findUnique({
+    where: { companyId_phoneE164: { companyId: input.companyId, phoneE164: clientPhone } },
+    select: { contextJson: true },
+  });
+  const conversationContext = parseConversationContext(conversationMemoryRaw?.contextJson);
+  const conversationHistory = buildAgentConversationHistory(conversationContext, incomingUserMessage);
+
+  // Dica de contexto para o classificador de intenção
+  const triageInfoHint = triageState
+    ? [
+        triageState.clientName ? `nome do cliente já registrado: ${triageState.clientName}` : "",
+        triageState.serviceId ? "serviço já selecionado" : "",
+        triageState.startsAtIso ? "horário já em rascunho" : "",
+        triageState.lastIntent ? `última intenção: ${triageState.lastIntent}` : "",
+      ]
+        .filter(Boolean)
+        .join(", ")
+    : undefined;
+
+  // Classificação de intenção com IA (contexto + histórico) + fallback por palavras-chave
+  const aiIntentResult: BarberIntentResult = await aiService.classifyBarberIntent({
+    companyId: input.companyId,
+    message: incomingUserMessage,
+    conversationHistory,
+    triageInfoHint,
+  });
+
   const parsedCustomerName = extractClientName(incomingUserMessage);
   const parsedCustomerDocument = extractCustomerDocument(incomingUserMessage);
   const parsedDateOnly = parseBarberDateOnly(incomingUserMessage);
   const parsedTimeOnly = parseBarberTimeOnly(incomingUserMessage);
-  const isGreetingMessage = isGreetingOnlyMessage(incomingUserMessage);
+
+  // isGreeting: tanto pelo classificador IA quanto pela detecção local de palavras
+  const isGreetingMessage = aiIntentResult.isGreeting || isGreetingOnlyMessage(incomingUserMessage);
+
+  const detectedIntent = aiIntentResult.intent;
   const hasRegistrationPayload =
     Boolean(parsedCustomerName || parsedCustomerDocument) || /^\d{11,14}$/.test(onlyDigits(incomingUserMessage));
+
+  // Retomada de fluxos anteriores — só ativa se NÃO for saudação e a IA não classificou algo específico
   const shouldResumeCustomerRegistration =
     detectedIntent === "ajuda" &&
     !isGreetingMessage &&
@@ -3379,14 +3712,39 @@ async function handleBarberConversation(input: {
         triageState.lastIntent === "agendar" &&
         (triageState.clientName || triageState.serviceId || triageState.startsAtIso),
     );
+  // Retomada de recibo: usuário respondeu com data após lista de atendimentos
+  const shouldResumeRecibo =
+    detectedIntent === "ajuda" &&
+    !isGreetingMessage &&
+    triageState?.lastIntent === "recibo" &&
+    parsedDateOnly !== null;
+  // Retomada de confirmação de cancelamento: usuário respondeu "sim" a um pendingCancelId
+  const shouldResumeCancelConfirm =
+    detectedIntent === "ajuda" &&
+    !isGreetingMessage &&
+    Boolean(triageState?.pendingCancelId) &&
+    isPositiveConfirmation(incomingUserMessage);
+  // Retomada de confirmação de agendamento: usuário respondeu "sim" a um pendingBookConfirm
+  const shouldResumeBookConfirm =
+    detectedIntent === "ajuda" &&
+    !isGreetingMessage &&
+    Boolean(triageState?.pendingBookConfirm) &&
+    isPositiveConfirmation(incomingUserMessage);
+
   const intent: BarberIntent =
     detectedIntent !== "ajuda"
       ? detectedIntent
-      : shouldResumeCustomerRegistration && triageState?.lastIntent
-        ? triageState.lastIntent
-        : shouldResumeScheduling
+      : shouldResumeCancelConfirm
+        ? "cancelar"
+        : shouldResumeBookConfirm
           ? "agendar"
-          : "ajuda";
+          : shouldResumeCustomerRegistration && triageState?.lastIntent
+            ? triageState.lastIntent
+            : shouldResumeScheduling
+              ? "agendar"
+              : shouldResumeRecibo
+                ? "recibo"
+                : "ajuda";
   const clientPhoneCandidates = buildPhoneCandidates(clientPhone);
 
   const phoneWhere =
@@ -3394,10 +3752,22 @@ async function handleBarberConversation(input: {
       ? clientPhoneCandidates.flatMap((candidate) => [{ clientPhone: candidate }, { clientPhone: { endsWith: candidate } }])
       : [{ clientPhone }];
 
+  // Verifica se é cliente recorrente baseado em agendamentos anteriores
+  const appointmentCount = await prisma.barberAppointment.count({
+    where: {
+      companyId: input.companyId,
+      OR: phoneWhere,
+    },
+  });
+  const isReturningClient = appointmentCount > 0;
+
+  // Esta função será atualizada com rememberedClientName após sua definição
+  let currentClientName: string | null = null;
+
   const renderReply = async (
     replyIntent: BarberIntent,
     operationSummary: string,
-    options?: { forcePending?: boolean },
+    options?: { forcePending?: boolean; clientName?: string | null },
   ): Promise<string> => {
     const fallback = operationSummary.trim();
     const pending = options?.forcePending ?? summarizeNeedsMoreData(fallback);
@@ -3407,11 +3777,16 @@ async function handleBarberConversation(input: {
     }
 
     try {
+      // Usa clientName explícito ou o nome atual conhecido
+      const clientNameToUse = options?.clientName !== undefined ? options.clientName : currentClientName;
+      
       const natural = await aiService.generateBookingNaturalReply({
         companyId: input.companyId,
         userMessage: incomingUserMessage,
         intent: replyIntent,
         operationSummary: fallback,
+        clientName: clientNameToUse,
+        isReturningClient,
       });
       const normalizedNatural = natural.trim();
       if (!normalizedNatural) {
@@ -3446,8 +3821,10 @@ async function handleBarberConversation(input: {
     };
   }
 
-  let knownCustomer = await findBookingCustomerByPhone(input.companyId, clientPhoneCandidates);
+  const voc = getSectorVocabulary(company.bookingSector);
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
+  let knownCustomer = await findBookingCustomerByPhone(input.companyId, clientPhoneCandidates);
   if (parsedCustomerName) {
     try {
       await rememberConversationUserName({
@@ -3471,8 +3848,16 @@ async function handleBarberConversation(input: {
   }
 
   const rememberedClientName = parsedCustomerName ?? triageState?.clientName ?? knownCustomer?.name ?? null;
+  
+  // Atualiza o nome do cliente para uso na função renderReply
+  currentClientName = rememberedClientName;
 
-  if (!rememberedClientName && (intent === "agendar" || intent === "listar_servicos" || intent === "ajuda")) {
+  // Só pede o nome se a intenção for operacional e não for uma saudação
+  if (
+    !rememberedClientName &&
+    !isGreetingMessage &&
+    (intent === "agendar" || intent === "listar_servicos")
+  ) {
     await upsertBarberTriageState({
       companyId: input.companyId,
       phone: clientPhone,
@@ -3491,7 +3876,7 @@ async function handleBarberConversation(input: {
 
     return {
       intent: "agendar",
-      text: await renderReply("agendar", operationSummary, { forcePending: true }),
+      text: await renderReply("agendar", operationSummary, { forcePending: true, clientName: null }),
     };
   }
 
@@ -3517,7 +3902,7 @@ async function handleBarberConversation(input: {
       });
 
       const lines: string[] = [];
-      lines.push("Antes de continuar, preciso concluir seu cadastro para o cartao fidelidade.");
+      lines.push(`Antes de continuar, preciso concluir seu cadastro para o ${voc.cartao}.`);
       if (nextCustomerName) {
         lines.push(`Nome identificado: ${nextCustomerName}.`);
       }
@@ -3606,41 +3991,98 @@ async function handleBarberConversation(input: {
       },
     });
 
-    let appointment = await prisma.barberAppointment.findFirst({
-      where: {
+    // Base da query de atendimentos concluídos
+    const completedWhere: Prisma.BarberAppointmentWhereInput = {
+      companyId: input.companyId,
+      AND: [
+        { OR: phoneWhere },
+        {
+          OR: [
+            { status: "completed" },
+            { status: "scheduled", startsAt: { lte: new Date() } },
+          ],
+        },
+      ],
+    };
+
+    // Conta total de atendimentos concluídos para este número
+    const totalCompletedForPhone = await prisma.barberAppointment.count({ where: completedWhere });
+
+    // Se o cliente tem múltiplos atendimentos e NÃO especificou uma data, pede qual deseja o recibo
+    if (totalCompletedForPhone > 1 && !parsedDateOnly) {
+      const recentForList = await prisma.barberAppointment.findMany({
+        where: completedWhere,
+        orderBy: { startsAt: "desc" },
+        take: 5,
+        include: { service: { select: { name: true } } },
+      });
+
+      await upsertBarberTriageState({
         companyId: input.companyId,
-        AND: [
-          {
-            OR: phoneWhere,
-          },
-          {
-            OR: [
-              { status: "completed" },
-              {
-                status: "scheduled",
-                startsAt: {
-                  lte: new Date(),
-                },
-              },
-            ],
-          },
-        ],
-      },
+        phone: clientPhone,
+        lastIntent: "recibo",
+      });
+
+      const listLines = recentForList
+        .map((apt) => `- ${formatDateBr(apt.startsAt)}: ${apt.service.name}`)
+        .join("\n");
+
+      const operationSummary = [
+        `Encontrei ${totalCompletedForPhone} atendimento(s) concluido(s) para este numero.`,
+        "Para emitir o recibo correto, me informe a data do atendimento desejado:",
+        listLines,
+        "Responda com a data no formato DD/MM ou DD/MM/AAAA.",
+      ].join("\n");
+
+      return {
+        intent,
+        text: await renderReply(intent, operationSummary, { forcePending: true }),
+      };
+    }
+
+    // Se especificou data, filtra por ela; caso contrário busca o mais recente
+    const appointmentWhereWithDate: Prisma.BarberAppointmentWhereInput =
+      parsedDateOnly
+        ? {
+            ...completedWhere,
+            startsAt: {
+              gte: new Date(parsedDateOnly.year, parsedDateOnly.month - 1, parsedDateOnly.day, 0, 0, 0),
+              lt: new Date(parsedDateOnly.year, parsedDateOnly.month - 1, parsedDateOnly.day, 23, 59, 59),
+            },
+          }
+        : completedWhere;
+
+    let appointment = await prisma.barberAppointment.findFirst({
+      where: appointmentWhereWithDate,
       orderBy: { startsAt: "desc" },
       include: {
-        barber: {
-          select: {
-            name: true,
-          },
-        },
-        service: {
-          select: {
-            name: true,
-            price: true,
-          },
-        },
+        barber: { select: { name: true } },
+        service: { select: { name: true, price: true } },
       },
     });
+
+    if (!appointment && parsedDateOnly) {
+      // Tentou filtrar por data mas não achou — avisa e pede nova seleção
+      const fallbackList = await prisma.barberAppointment.findMany({
+        where: completedWhere,
+        orderBy: { startsAt: "desc" },
+        take: 5,
+        include: { service: { select: { name: true } } },
+      });
+
+      const listLines = fallbackList.map((apt) => `- ${formatDateBr(apt.startsAt)}: ${apt.service.name}`).join("\n");
+      const operationSummary = [
+        `Nao encontrei atendimento concluido no dia ${parsedDateOnly.day}/${parsedDateOnly.month}.`,
+        "Estas sao as datas disponiveis:",
+        listLines,
+        "Me informe a data correta.",
+      ].join("\n");
+
+      return {
+        intent,
+        text: await renderReply(intent, operationSummary, { forcePending: true }),
+      };
+    }
 
     if (!appointment) {
       return {
@@ -3720,7 +4162,7 @@ async function handleBarberConversation(input: {
       `Valor: ${formatCurrency(Number(appointment.service.price))}.`,
       `Data do atendimento: ${formatDateTimeBr(appointment.startsAt)}.`,
       `Recibo: ${appointment.id}.`,
-      `Cartao fidelidade: ${loyalty.completedServices} servico(s) concluido(s).`,
+      `${cap(voc.cartao)}: ${loyalty.completedServices} ${voc.atendimento_pl} concluido(s).`,
       loyalty.nextRewardIn > 0
         ? `Faltam ${loyalty.nextRewardIn} atendimento(s) para liberar o proximo premio.`
         : `Meta de ${BOOKING_LOYALTY_GOAL} atendimentos concluida. Premio disponivel.`,
@@ -3786,14 +4228,14 @@ async function handleBarberConversation(input: {
     });
 
     const operationSummary = [
-      "Consulta de cartao fidelidade concluida.",
+      `Consulta de ${voc.cartao} concluida.`,
       `Cliente: ${registration.customer.name}.`,
       `Documento: ${formatCustomerDocument(registration.customer.document)}.`,
-      `Atendimentos concluidos: ${loyalty.completedServices}.`,
+      `${cap(voc.atendimento_pl)} concluidos: ${loyalty.completedServices}.`,
       `Premios liberados: ${loyalty.rewardsUnlocked}.`,
       loyalty.nextRewardIn > 0
-        ? `Faltam ${loyalty.nextRewardIn} atendimento(s) para o proximo premio.`
-        : `Meta atual concluida. Proximo atendimento ja inicia um novo ciclo de fidelidade.`,
+        ? `Faltam ${loyalty.nextRewardIn} ${voc.atendimento_pl} para o proximo ${voc.premio} (a cada ${BOOKING_LOYALTY_GOAL} ${voc.atendimento_pl}).`
+        : `Meta de ${BOOKING_LOYALTY_GOAL} ${voc.atendimento_pl} concluida. ${cap(voc.premio)} disponivel. Conversar com o estabelecimento para resgatar.`,
     ]
       .join("\n")
       .trim();
@@ -3834,7 +4276,7 @@ async function handleBarberConversation(input: {
       };
     }
 
-    // Quando existe apenas 1 servico ativo, persistimos no MySQL para continuar o fluxo no proximo turno.
+    // Quando existe apenas 1 serviço ativo, persiste já selecionado
     if (services.length === 1) {
       await upsertBarberTriageState({
         companyId: input.companyId,
@@ -3842,6 +4284,17 @@ async function handleBarberConversation(input: {
         clientName: rememberedClientName,
         clientDocument: triageState?.clientDocument ?? null,
         serviceId: services[0]!.id,
+        startsAtIso: triageState?.startsAtIso ?? null,
+        lastIntent: "agendar",
+      });
+    } else {
+      // Para múltiplos serviços, salva lastIntent="agendar" para retomar no próximo turno
+      await upsertBarberTriageState({
+        companyId: input.companyId,
+        phone: clientPhone,
+        clientName: rememberedClientName,
+        clientDocument: triageState?.clientDocument ?? null,
+        serviceId: triageState?.serviceId ?? null,
         startsAtIso: triageState?.startsAtIso ?? null,
         lastIntent: "agendar",
       });
@@ -3856,7 +4309,9 @@ async function handleBarberConversation(input: {
       `Foram encontrados ${services.length} servico(s) ativo(s):`,
       ...lines,
       "",
-      "Se o cliente quiser, pode agendar enviando nome, servico e data/hora.",
+      services.length === 1
+        ? `Para agendar ${services[0]!.name}, envie data e horario (ex: 20/02 14:30).`
+        : "Para agendar, responda com o nome do servico desejado e data/hora.",
     ]
       .join("\n")
       .trim();
@@ -3902,15 +4357,17 @@ async function handleBarberConversation(input: {
       };
     }
 
-    const lines = appointments.map((appointment) => {
-      return `- ${formatDateTimeBr(appointment.startsAt)} | ${appointment.service.name} | ${appointment.barber.name}`;
+    const lines = appointments.map((appointment, i) => {
+      return `${i + 1}. ${formatDateTimeBr(appointment.startsAt)} | ${appointment.service.name} | ${appointment.barber.name}`;
     });
 
     const operationSummary = [
       "Agendamentos futuros encontrados para este cliente:",
       ...lines,
       "",
-      "Se o cliente quiser cancelar, solicitar confirmacao da operacao.",
+      appointments.length === 1
+        ? "Se o cliente quiser cancelar este agendamento, e so solicitar o cancelamento."
+        : "Para cancelar um agendamento, o cliente pode enviar *cancelar* e informar o numero ou data do horario desejado.",
     ]
       .join("\n")
       .trim();
@@ -3922,64 +4379,128 @@ async function handleBarberConversation(input: {
   }
 
   if (intent === "cancelar") {
-    await clearBarberTriageState(input.companyId, clientPhone, { lastIntent: "cancelar" });
+    // ── Passo 2: usuário confirmou cancelamento ──────────────────────────────
+    if (triageState?.pendingCancelId && isPositiveConfirmation(incomingUserMessage)) {
+      const toCancel = await prisma.barberAppointment.findFirst({
+        where: {
+          id: triageState.pendingCancelId,
+          companyId: input.companyId,
+          status: "scheduled",
+        },
+        include: {
+          barber: { select: { name: true } },
+          service: { select: { name: true } },
+        },
+      });
 
-    const appointment = await prisma.barberAppointment.findFirst({
+      if (!toCancel) {
+        await clearBarberTriageState(input.companyId, clientPhone, { lastIntent: "cancelar" });
+        return {
+          intent,
+          text: await renderReply(
+            intent,
+            "Nao encontrei o agendamento para cancelar. Ele pode ja ter sido cancelado ou realizado. Solicite um novo cancelamento se necessario.",
+          ),
+        };
+      }
+
+      const remainingMsConfirm = toCancel.startsAt.getTime() - Date.now();
+      if (remainingMsConfirm < CLIENT_CANCELLATION_MIN_LEAD_MS) {
+        await clearBarberTriageState(input.companyId, clientPhone, { lastIntent: "cancelar" });
+        return {
+          intent,
+          text: await renderReply(
+            intent,
+            [
+              "Cancelamento nao permitido para este horario.",
+              `O agendamento inicia em ${formatDateTimeBr(toCancel.startsAt)}.`,
+              "A politica permite cancelamento somente com antecedencia minima de 1 hora.",
+            ].join("\n"),
+          ),
+        };
+      }
+
+      await prisma.barberAppointment.update({ where: { id: toCancel.id }, data: { status: "canceled" } });
+      await clearBarberTriageState(input.companyId, clientPhone, { lastIntent: "cancelar" });
+
+      return {
+        intent,
+        text: await renderReply(
+          intent,
+          [
+            `${voc.cancelado} com sucesso.`,
+            `Servico: ${toCancel.service.name}.`,
+            `Horario: ${formatDateTimeBr(toCancel.startsAt)}.`,
+            `${cap(voc.profissional)}: ${toCancel.barber.name}.`,
+          ].join("\n"),
+        ),
+      };
+    }
+
+    // ── Passo 1: listar agendamentos e pedir confirmação ──────────────────────
+    const upcomingAppointments = await prisma.barberAppointment.findMany({
       where: {
         companyId: input.companyId,
         status: "scheduled",
         OR: phoneWhere,
-        startsAt: {
-          gte: new Date(),
-        },
+        startsAt: { gte: new Date() },
       },
       orderBy: { startsAt: "asc" },
+      take: 3,
       include: {
-        barber: {
-          select: {
-            name: true,
-          },
-        },
-        service: {
-          select: {
-            name: true,
-          },
-        },
+        barber: { select: { name: true } },
+        service: { select: { name: true } },
       },
     });
 
-    if (!appointment) {
-      const operationSummary =
-        "Nenhum agendamento futuro foi localizado para este numero. Informe isso ao cliente e ofereca novo agendamento.";
+    if (upcomingAppointments.length === 0) {
+      await clearBarberTriageState(input.companyId, clientPhone, { lastIntent: "cancelar" });
       return {
         intent,
-        text: await renderReply(intent, operationSummary),
+        text: await renderReply(
+          intent,
+          "Nenhum agendamento futuro foi localizado para este numero. Informe isso ao cliente e ofereca novo agendamento.",
+        ),
       };
     }
 
-    const remainingToStartMs = appointment.startsAt.getTime() - Date.now();
+    const candidate = upcomingAppointments[0]!;
+    const remainingToStartMs = candidate.startsAt.getTime() - Date.now();
     if (remainingToStartMs < CLIENT_CANCELLATION_MIN_LEAD_MS) {
-      const operationSummary = [
-        "Cancelamento nao permitido para este horario.",
-        `O agendamento inicia em ${formatDateTimeBr(appointment.startsAt)}.`,
-        "A politica permite cancelamento somente com antecedencia minima de 1 hora.",
-      ].join("\n");
+      await clearBarberTriageState(input.companyId, clientPhone, { lastIntent: "cancelar" });
       return {
         intent,
-        text: await renderReply(intent, operationSummary),
+        text: await renderReply(
+          intent,
+          [
+            "Cancelamento nao permitido para este horario.",
+            `O agendamento inicia em ${formatDateTimeBr(candidate.startsAt)}.`,
+            "A politica permite cancelamento somente com antecedencia minima de 1 hora.",
+          ].join("\n"),
+        ),
       };
     }
 
-    await prisma.barberAppointment.update({
-      where: { id: appointment.id },
-      data: { status: "canceled" },
+    await upsertBarberTriageState({
+      companyId: input.companyId,
+      phone: clientPhone,
+      pendingCancelId: candidate.id,
+      lastIntent: "cancelar",
     });
 
+    const apptLines = upcomingAppointments.map(
+      (a, i) => `${i + 1}. ${formatDateTimeBr(a.startsAt)} | ${a.service.name} | ${a.barber.name}`,
+    );
+    const confirmQuestion =
+      upcomingAppointments.length > 1
+        ? `Confirma o cancelamento do item 1 (${formatDateTimeBr(candidate.startsAt)})? Responda *sim* para confirmar ou informe a data do agendamento que deseja cancelar.`
+        : `Confirma o cancelamento deste agendamento? Responda *sim* para confirmar.`;
+
     const operationSummary = [
-      "Agendamento cancelado com sucesso.",
-      `Servico: ${appointment.service.name}.`,
-      `Horario: ${formatDateTimeBr(appointment.startsAt)}.`,
-      `Recurso: ${appointment.barber.name}.`,
+      upcomingAppointments.length > 1 ? "Seus proximos agendamentos:" : "Seu proximo agendamento:",
+      ...apptLines,
+      "",
+      confirmQuestion,
     ].join("\n");
 
     return {
@@ -3989,6 +4510,86 @@ async function handleBarberConversation(input: {
   }
 
   if (intent === "agendar") {
+    // ── Retomada: usuário confirmou agendamento pendente ─────────────────────
+    const pendingConfirm = triageState?.pendingBookConfirm;
+    if (pendingConfirm && isPositiveConfirmation(incomingUserMessage)) {
+      const [confirmService, confirmBarber] = await Promise.all([
+        prisma.barberService.findFirst({ where: { id: pendingConfirm.serviceId, companyId: input.companyId, active: true } }),
+        prisma.barberProfile.findFirst({ where: { id: pendingConfirm.barberId, companyId: input.companyId, active: true } }),
+      ]);
+
+      const confirmStartsAt = new Date(pendingConfirm.startsAtIso);
+      if (
+        confirmService &&
+        confirmBarber &&
+        !Number.isNaN(confirmStartsAt.getTime()) &&
+        confirmStartsAt.getTime() > Date.now()
+      ) {
+        // Verifica se o slot ainda está livre
+        const confirmEndsAt = new Date(confirmStartsAt.getTime() + confirmService.durationMinutes * 60 * 1000);
+        const confirmOverlap = await prisma.barberAppointment.findFirst({
+          where: {
+            companyId: input.companyId,
+            barberId: confirmBarber.id,
+            status: "scheduled",
+            startsAt: { lt: confirmEndsAt },
+            endsAt: { gt: confirmStartsAt },
+          },
+          select: { id: true },
+        });
+
+        if (!confirmOverlap) {
+          const createdConfirm = await prisma.barberAppointment.create({
+            data: {
+              companyId: input.companyId,
+              bookingCustomerId: knownCustomer?.id ?? null,
+              barberId: confirmBarber.id,
+              serviceId: confirmService.id,
+              clientName: rememberedClientName ?? "Cliente",
+              clientPhone,
+              startsAt: confirmStartsAt,
+              endsAt: confirmEndsAt,
+              status: "scheduled",
+              source: "whatsapp",
+            },
+          });
+
+          await clearBarberTriageState(input.companyId, clientPhone, {
+            lastIntent: "agendar",
+            userName: rememberedClientName ?? undefined,
+          });
+
+          const confirmSummary = [
+            `${voc.agendado} com sucesso.`,
+            `Cliente: ${createdConfirm.clientName}.`,
+            `Servico: ${confirmService.name}.`,
+            `${cap(voc.profissional)}: ${confirmBarber.name}.`,
+            `Horario: ${formatDateTimeBr(confirmStartsAt)}.`,
+            knownCustomer
+              ? "Cliente vinculado ao cadastro de fidelidade."
+              : `Para ativar o ${voc.cartao}, o cliente pode enviar CPF/CNPJ apos o ${voc.servico}.`,
+          ].join("\n");
+
+          return { intent, text: await renderReply(intent, confirmSummary) };
+        }
+      }
+
+      // Slot não está mais disponível — invalida pendingBookConfirm e pede novo horário
+      await upsertBarberTriageState({
+        companyId: input.companyId,
+        phone: clientPhone,
+        pendingBookConfirm: null,
+        lastIntent: "agendar",
+      });
+      return {
+        intent,
+        text: await renderReply(
+          intent,
+          "O horario reservado nao esta mais disponivel. Solicitar ao cliente um novo horario para concluir o agendamento.",
+        ),
+      };
+    }
+
     const [services, barbers] = await Promise.all([
       prisma.barberService.findMany({
         where: {
@@ -4214,20 +4815,41 @@ async function handleBarberConversation(input: {
     });
 
     if (overlap) {
+      // Busca próximos slots livres para sugerir
+      const freeSlots = await findNextFreeSlots({
+        companyId: input.companyId,
+        barberId: barber.id,
+        durationMinutes: service.durationMinutes,
+        afterDate: startsAt,
+        count: 3,
+      });
+
       await upsertBarberTriageState({
         companyId: input.companyId,
         phone: clientPhone,
         clientName,
         serviceId: service.id,
         startsAtIso: null,
+        pendingBookConfirm: null,
         lastIntent: "agendar",
       });
 
-      const operationSummary =
-        "O horario solicitado ja esta ocupado para este recurso. Solicitar ao cliente outro horario disponivel.";
+      const slotSuggestion =
+        freeSlots.length > 0
+          ? `Horarios disponiveis proximos: ${freeSlots.map((d) => formatDateTimeBr(d)).join(" | ")}.`
+          : "";
+
+      const overlapSummary = [
+        "O horario solicitado ja esta ocupado para este recurso.",
+        slotSuggestion,
+        "Solicitar ao cliente outro horario disponivel.",
+      ]
+        .filter(Boolean)
+        .join(" ");
+
       return {
         intent,
-        text: await renderReply(intent, operationSummary),
+        text: await renderReply(intent, overlapSummary),
       };
     }
 
@@ -4258,46 +4880,45 @@ async function handleBarberConversation(input: {
       }
     }
 
-    const appointment = await prisma.barberAppointment.create({
-      data: {
-        companyId: input.companyId,
-        bookingCustomerId: knownCustomer?.id ?? null,
+    // ── Passo de confirmação: salva pendingBookConfirm e pede confirmação ─────
+    await upsertBarberTriageState({
+      companyId: input.companyId,
+      phone: clientPhone,
+      clientName,
+      serviceId: service.id,
+      startsAtIso: startsAt.toISOString(),
+      pendingBookConfirm: {
         barberId: barber.id,
         serviceId: service.id,
-        clientName,
-        clientPhone,
-        startsAt,
-        endsAt,
-        status: "scheduled",
-        source: "whatsapp",
+        startsAtIso: startsAt.toISOString(),
       },
+      lastIntent: "agendar",
     });
 
-    await clearBarberTriageState(input.companyId, clientPhone, { lastIntent: "agendar", userName: clientName });
-
-    const operationSummary = [
-      "Agendamento confirmado com sucesso.",
-      `Cliente: ${clientName}.`,
+    const confirmSummary = [
+      "Recebi todos os dados! Antes de confirmar, aqui esta o resumo:",
       `Servico: ${service.name}.`,
-      `Recurso: ${barber.name}.`,
-      `Horario: ${formatDateTimeBr(appointment.startsAt)}.`,
-      knownCustomer
-        ? "Cliente vinculado ao cadastro de fidelidade."
-        : "Para ativar o cartao fidelidade, o cliente pode enviar CPF/CNPJ apos o atendimento.",
+      `${cap(voc.profissional)}: ${barber.name}.`,
+      `Horario: ${formatDateTimeBr(startsAt)}.`,
+      `Cliente: ${clientName}.`,
+      "",
+      "Confirma o agendamento? Responda *sim* para finalizar.",
     ].join("\n");
 
     return {
       intent,
-      text: await renderReply(intent, operationSummary),
+      text: await renderReply(intent, confirmSummary, { forcePending: true }),
     };
   }
 
   if (isGreetingMessage) {
+    const firstName = rememberedClientName ? rememberedClientName.split(" ")[0] : null;
     const operationSummary = [
-      rememberedClientName
-        ? `Ola, ${rememberedClientName}! Estou pronto para te ajudar com seu atendimento.`
-        : "Ola! Estou pronto para te ajudar com seu atendimento.",
-      "Voce pode enviar: servicos, agendar, agenda, cancelar, recibo ou fidelidade.",
+      firstName
+        ? `Ola, ${firstName}! Bom te ver por aqui novamente.`
+        : "Ola! Seja bem-vindo(a) ao nosso atendimento.",
+      `Posso te ajudar com: ${voc.greeting_opcoes}.`,
+      "Como posso te ajudar hoje?",
     ].join("\n");
 
     return {

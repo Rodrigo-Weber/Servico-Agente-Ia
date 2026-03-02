@@ -3,8 +3,33 @@ import type { CompanyAiType } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { DEFAULT_GLOBAL_AI_PROMPT, getDefaultPromptForCategory } from "../config/default-ai-prompt.js";
 import { appConfigService } from "./app-config.service.js";
+import {
+  getTimeGreeting,
+  getWeekdayContext,
+  detectClientTone,
+  getResponseForTone,
+  getConfirmation,
+  getMoreHelp,
+  type ClientTone,
+  type BusinessSector,
+} from "../lib/humanization.js";
 
 type IntentType = "ver" | "importar" | "ver_e_importar" | "ajuda";
+
+type BarberIntentValue =
+  | "listar_servicos"
+  | "agendar"
+  | "cancelar"
+  | "agenda"
+  | "recibo"
+  | "fidelidade"
+  | "ajuda";
+
+export interface BarberIntentResult {
+  intent: BarberIntentValue;
+  isGreeting: boolean;
+  confidence: number;
+}
 
 interface IntentResult {
   intent: IntentType;
@@ -27,6 +52,8 @@ interface BookingNaturalReplyInput {
   operationSummary: string;
   shouldAskAction?: boolean;
   actionHint?: string;
+  clientName?: string | null;
+  isReturningClient?: boolean;
 }
 
 interface ProactiveNfe {
@@ -175,6 +202,155 @@ class AiService {
     };
   }
 
+  /**
+   * Classifica a intenção de uma mensagem de agendamento usando IA com histórico de conversa.
+   * Retorna "saudacao" mapeado para "ajuda" + isGreeting=true para saudações puras.
+   */
+  async classifyBarberIntent(input: {
+    companyId: string;
+    message: string;
+    conversationHistory?: AgentConversationMessage[];
+    triageInfoHint?: string;
+  }): Promise<BarberIntentResult> {
+    const settings = await appConfigService.getSettings();
+
+    if (!this.isAiProviderConfigured(settings.groqApiKey)) {
+      return this.heuristicBarberIntentResult(input.message);
+    }
+
+    const historyLines = (input.conversationHistory ?? [])
+      .slice(-6)
+      .map((m) => `${m.role === "user" ? "Usuário" : "Assistente"}: ${m.text}`)
+      .join("\n");
+
+    const systemContent = [
+      "Você é um classificador de intenção para um sistema de agendamentos (barbearia, lava jato, clínica, etc.).",
+      "Classifique a mensagem do usuário em EXATAMENTE um dos valores abaixo:",
+      "- listar_servicos: quer ver serviços, preços ou opções disponíveis",
+      "- agendar: quer marcar, remarcar ou criar um agendamento",
+      "- cancelar: quer cancelar ou desmarcar um agendamento",
+      "- agenda: quer ver seus agendamentos futuros",
+      "- recibo: quer recibo ou comprovante de serviço já realizado",
+      "- fidelidade: quer informações sobre pontos ou cartão fidelidade",
+      "- saudacao: APENAS cumprimento sem nenhuma solicitação operacional (oi, bom dia, boa tarde, olá, tudo bem, blz, etc.)",
+      "- ajuda: pergunta geral ou não se encaixa em nenhuma categoria acima",
+      "",
+      "REGRAS IMPORTANTES:",
+      "- Se for APENAS saudação sem pedido operacional, retorne \"saudacao\".",
+      "- Se houver saudação + pedido (ex: \"bom dia, quero agendar\"), retorne o pedido operacional.",
+      "- Use o HISTÓRICO DA CONVERSA para entender continuidade.",
+      "  Exemplo: assistente pediu nome → usuário responde com nome → intent = \"agendar\".",
+      "  Exemplo: assistente listou datas para recibo → usuário responde com data → intent = \"recibo\".",
+      "- NUNCA interprete o nome próprio da pessoa como uma intenção.",
+      "- Se o usuário responder a uma pergunta do assistente, use o contexto para classificar.",
+      input.triageInfoHint ? `- Estado atual do atendimento: ${input.triageInfoHint}` : "",
+      "",
+      "Retorne SOMENTE JSON válido: {\"intent\":\"...\",\"confidence\":0.0-1.0}",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const userContent = [
+      historyLines ? `Histórico recente:\n${historyLines}` : "",
+      `Mensagem atual do usuário: ${input.message}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    try {
+      const response = await axios.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        {
+          model: TOOL_FALLBACK_MODEL, // Modelo rápido para classificação
+          temperature: 0,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: systemContent },
+            { role: "user", content: userContent },
+          ],
+        },
+        {
+          timeout: 8000,
+          headers: {
+            Authorization: `Bearer ${settings.groqApiKey}`,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+
+      const raw = response.data?.choices?.[0]?.message?.content;
+      if (typeof raw === "string") {
+        const parsed = JSON.parse(raw) as { intent?: string; confidence?: number };
+        const rawIntent = (parsed.intent ?? "").trim().toLowerCase();
+        const isGreeting = rawIntent === "saudacao";
+        const intent = this.sanitizeBarberIntentValue(rawIntent);
+
+        if (intent) {
+          return {
+            intent,
+            isGreeting,
+            confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.75,
+          };
+        }
+      }
+    } catch {
+      // fallback heurístico garante disponibilidade
+    }
+
+    return this.heuristicBarberIntentResult(input.message);
+  }
+
+  private sanitizeBarberIntentValue(value: string): BarberIntentValue | null {
+    if (value === "saudacao") {
+      return "ajuda";
+    }
+    const valid: BarberIntentValue[] = [
+      "listar_servicos",
+      "agendar",
+      "cancelar",
+      "agenda",
+      "recibo",
+      "fidelidade",
+      "ajuda",
+    ];
+    return valid.includes(value as BarberIntentValue) ? (value as BarberIntentValue) : null;
+  }
+
+  private heuristicBarberIntentResult(message: string): BarberIntentResult {
+    if (this.isLocalGreeting(message)) {
+      return { intent: "ajuda", isGreeting: true, confidence: 0.5 };
+    }
+    const text = this.normalizeTextForSearch(message);
+    if (text.includes("recibo") || text.includes("comprovante")) return { intent: "recibo", isGreeting: false, confidence: 0.8 };
+    if (text.includes("fidelidade") || text.includes("pontos")) return { intent: "fidelidade", isGreeting: false, confidence: 0.8 };
+    if (text.includes("cancel") || text.includes("desmarc")) return { intent: "cancelar", isGreeting: false, confidence: 0.8 };
+    if (text.includes("agend") || text.includes("marcar") || text.includes("reagend")) return { intent: "agendar", isGreeting: false, confidence: 0.7 };
+    if (text.includes("agenda") || text.includes("horario")) return { intent: "agenda", isGreeting: false, confidence: 0.7 };
+    if (text.includes("servic") || text.includes("preco") || text.includes("valor") || text.includes("corte")) return { intent: "listar_servicos", isGreeting: false, confidence: 0.7 };
+    return { intent: "ajuda", isGreeting: false, confidence: 0.4 };
+  }
+
+  private isLocalGreeting(message: string): boolean {
+    const normalized = message
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const exact = [
+      "oi", "ola", "opa", "e ai", "eae", "salve",
+      "bom dia", "boa tarde", "boa noite",
+      "tudo bem", "td bem", "blz", "beleza",
+    ];
+    if (exact.includes(normalized)) return true;
+    return /^(oi|ola|opa|e ai|eae|salve|bom dia|boa tarde|boa noite)(\s+(tudo bem|td bem|blz|beleza|amigo|amiga|pessoal))?$/.test(normalized);
+  }
+
+  private normalizeTextForSearch(text: string): string {
+    return text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  }
+
   async generateNaturalReply(input: NaturalReplyInput): Promise<string> {
     const prompt = await this.resolvePrompt(input.companyId);
     const settings = await appConfigService.getSettings();
@@ -256,9 +432,25 @@ class AiService {
       return this.fallbackBookingReply(input.operationSummary, input.shouldAskAction, input.actionHint);
     }
 
+    // Detecta tom do cliente para adaptar resposta
+    const clientTone = detectClientTone(input.userMessage);
+    const toneResponse = getResponseForTone(clientTone);
+    const timeGreeting = getTimeGreeting();
+    const weekdayContext = getWeekdayContext();
+
+    const humanizationContext = [
+      `CONTEXTO TEMPORAL: Saudacao atual = "${timeGreeting}"${weekdayContext ? `. Dia especial: "${weekdayContext}"` : ""}.`,
+      clientTone !== "neutral" ? `TOM DO CLIENTE: ${clientTone}. Sugestao de resposta empatica: "${toneResponse}".` : "",
+      input.clientName ? `NOME DO CLIENTE: ${input.clientName}. Use o nome para criar conexao.` : "",
+      input.isReturningClient ? "CLIENTE RECORRENTE: Seja mais caloroso, ele ja conhece o servico." : "",
+    ].filter(Boolean).join("\n");
+
     const systemPrompt = [
       prompt,
       sectorInstructions,
+      "",
+      "HUMANIZACAO DO ATENDIMENTO:",
+      humanizationContext,
       "",
       "Contexto adicional deste atendimento:",
       "- Este fluxo e de agendamento operacional (barbearia, clinica, lava jato ou agenda generica).",
@@ -268,14 +460,14 @@ class AiService {
       "- Nao invente categoria/tipo de servico (ex.: simples, premium, completa) se nao estiver no resumo operacional.",
       "- Se houver apenas um servico no resumo, trate esse servico como selecionado e nao pergunte novamente o tipo.",
       "- Mantenha continuidade da conversa: nao reinicie atendimento em toda mensagem.",
-      "- Evite bordoes repetitivos no inicio das respostas (ex.: 'E ai', 'Bora', 'Tudo certo').",
+      "- VARIE suas expressoes. Nao use sempre 'E ai', 'Bora', 'Tudo certo'. Alterne aberturas e fechamentos.",
       "- Responda em texto simples de WhatsApp, sem markdown.",
       "- Formate com frases curtas e claras; use lista somente quando necessario.",
       "",
       "Objetivo da resposta:",
-      "- Transformar o resumo operacional em uma mensagem natural, clara e curta para o cliente.",
-      "- Se houver pendencia de dados, pedir somente o que falta.",
-      "- Se a operacao foi concluida, confirmar o resultado e orientar o proximo passo.",
+      "- Transformar o resumo operacional em uma mensagem natural, humanizada e curta para o cliente.",
+      "- Se houver pendencia de dados, pedir somente o que falta de forma conversacional.",
+      "- Se a operacao foi concluida, confirmar o resultado com entusiasmo e orientar o proximo passo.",
     ].join("\n");
 
     const userPayload = {
@@ -284,6 +476,9 @@ class AiService {
       resumo_operacional: input.operationSummary,
       deve_perguntar_proxima_acao: Boolean(input.shouldAskAction),
       sugestao_de_acao: input.actionHint ?? "",
+      nome_cliente: input.clientName ?? null,
+      tom_cliente: clientTone,
+      cliente_recorrente: input.isReturningClient ?? false,
     };
 
     try {
@@ -561,16 +756,22 @@ class AiService {
 
   private fallbackBookingReply(operationSummary: string, shouldAskAction?: boolean, actionHint?: string): string {
     const base = this.normalizeWhatsappText(operationSummary || "");
-    if (!shouldAskAction) {
-      return base;
-    }
-
-    const hint = this.normalizeWhatsappText(actionHint || "Quer que eu continue com o proximo passo?");
+    const confirmation = getConfirmation();
+    const moreHelp = getMoreHelp();
+    
     if (!base) {
-      return hint;
+      if (shouldAskAction && actionHint) {
+        return this.normalizeWhatsappText(actionHint);
+      }
+      return `${getTimeGreeting()}! Como posso ajudar?`;
     }
 
-    return `${base}\n\n${hint}`;
+    if (!shouldAskAction) {
+      return `${confirmation} ${base}`;
+    }
+
+    const hint = this.normalizeWhatsappText(actionHint || moreHelp);
+    return `${confirmation} ${base}\n\n${hint}`;
   }
 
   private async resolveBookingSectorInstructions(companyId: string): Promise<string> {
