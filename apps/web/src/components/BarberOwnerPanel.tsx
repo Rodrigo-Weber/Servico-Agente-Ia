@@ -6,7 +6,9 @@ import {
   ChevronLeft,
   ChevronRight,
   CheckCircle2,
+  FileText,
   Clock3,
+  MessageCircle,
   RefreshCw,
   Save,
   Scissors,
@@ -36,6 +38,30 @@ interface HourDraft {
   active: boolean;
   startTime: string;
   endTime: string;
+}
+
+interface NfseDraft {
+  serviceCode: string;
+  serviceDescription: string;
+  amount: string;
+  issRate: string;
+  customerDocument: string;
+  customerEmail: string;
+}
+
+interface MockNfse {
+  appointmentId: string;
+  number: string;
+  rps: string;
+  issuedAt: string;
+  serviceCode: string;
+  serviceDescription: string;
+  amount: number;
+  issRate: number;
+  issValue: number;
+  customerDocument: string;
+  customerEmail: string;
+  whatsappSentAt: string | null;
 }
 
 const WEEKDAY_LABELS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
@@ -227,6 +253,80 @@ function formatDateTime(value: string): string {
   return date.toLocaleString("pt-BR");
 }
 
+function formatCurrency(value: number): string {
+  return value.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+}
+
+function parseDecimalInput(value: string): number {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return 0;
+  }
+
+  const hasComma = trimmed.includes(",");
+  const hasDot = trimmed.includes(".");
+  let normalized = trimmed;
+
+  if (hasComma && hasDot) {
+    normalized = trimmed.replace(/\./g, "").replace(",", ".");
+  } else if (hasComma) {
+    normalized = trimmed.replace(",", ".");
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeWhatsappPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  if (!digits) {
+    return "";
+  }
+
+  if (digits.startsWith("55") && digits.length >= 12) {
+    return digits;
+  }
+
+  if (digits.length === 10 || digits.length === 11) {
+    return `55${digits}`;
+  }
+
+  return digits;
+}
+
+function createDefaultNfseDraft(
+  appointment: BarberAppointment,
+  sector: "barber" | "clinic" | "car_wash" | "generic",
+): NfseDraft {
+  const fallbackServiceName = sector === "car_wash" ? "Lavagem de veículo" : "Prestação de serviço";
+  const serviceName = appointment.service?.name || fallbackServiceName;
+  const defaultCode = sector === "car_wash" ? "140501" : "140101";
+
+  return {
+    serviceCode: defaultCode,
+    serviceDescription: `${serviceName} referente ao agendamento de ${formatDateTime(appointment.startsAt)}`,
+    amount: appointment.service?.price || "0",
+    issRate: "5",
+    customerDocument: "",
+    customerEmail: "",
+  };
+}
+
+function buildMockNfseNumber(appointmentId: string): string {
+  const digits = appointmentId.replace(/\D/g, "");
+  const seed = digits.slice(-6).padStart(6, "0");
+  return `${new Date().getFullYear()}${seed}`;
+}
+
+function buildMockRps(appointmentId: string): string {
+  const compact = appointmentId.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  const seed = compact.slice(-8).padStart(8, "0");
+  return `RPS-${seed}`;
+}
+
 function normalizeConfirmationInput(value: string): string {
   return value
     .normalize("NFD")
@@ -302,6 +402,8 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [loadingWhatsappAction, setLoadingWhatsappAction] = useState(false);
   const [dayStatusFilter, setDayStatusFilter] = useState<"all" | BarberAppointmentStatus>("all");
+  const [nfseDraftsByAppointmentId, setNfseDraftsByAppointmentId] = useState<Record<string, NfseDraft>>({});
+  const [mockNfseByAppointmentId, setMockNfseByAppointmentId] = useState<Record<string, MockNfse>>({});
 
   const filteredDayAppointments = useMemo(() => {
     if (dayStatusFilter === "all") return dayAppointments;
@@ -367,6 +469,40 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
     () => filteredDayAppointments.find((appointment) => appointment.id === selectedAppointmentId) ?? null,
     [filteredDayAppointments, selectedAppointmentId],
   );
+  const selectedNfseDraft = useMemo(() => {
+    if (!selectedDayAppointment) {
+      return null;
+    }
+
+    return (
+      nfseDraftsByAppointmentId[selectedDayAppointment.id] ??
+      createDefaultNfseDraft(selectedDayAppointment, bookingSector)
+    );
+  }, [bookingSector, nfseDraftsByAppointmentId, selectedDayAppointment]);
+  const selectedMockNfse = useMemo(() => {
+    if (!selectedDayAppointment) {
+      return null;
+    }
+
+    return mockNfseByAppointmentId[selectedDayAppointment.id] ?? null;
+  }, [mockNfseByAppointmentId, selectedDayAppointment]);
+
+  useEffect(() => {
+    if (!selectedDayAppointment) {
+      return;
+    }
+
+    setNfseDraftsByAppointmentId((prev) => {
+      if (prev[selectedDayAppointment.id]) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        [selectedDayAppointment.id]: createDefaultNfseDraft(selectedDayAppointment, bookingSector),
+      };
+    });
+  }, [bookingSector, selectedDayAppointment]);
 
   async function loadAll() {
     setLoading(true);
@@ -706,6 +842,100 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : "Falha ao excluir agendamento");
     }
+  }
+
+  function updateNfseDraftField<K extends keyof NfseDraft>(
+    appointment: BarberAppointment,
+    field: K,
+    value: NfseDraft[K],
+  ) {
+    setNfseDraftsByAppointmentId((prev) => {
+      const current = prev[appointment.id] ?? createDefaultNfseDraft(appointment, bookingSector);
+      return {
+        ...prev,
+        [appointment.id]: {
+          ...current,
+          [field]: value,
+        },
+      };
+    });
+  }
+
+  function handleCreateMockNfse(appointment: BarberAppointment) {
+    const draft = nfseDraftsByAppointmentId[appointment.id] ?? createDefaultNfseDraft(appointment, bookingSector);
+    const amount = parseDecimalInput(draft.amount);
+    const issRate = parseDecimalInput(draft.issRate);
+
+    if (amount <= 0) {
+      setFeedback("Informe um valor válido para gerar a NFS-e.");
+      return;
+    }
+
+    if (issRate < 0) {
+      setFeedback("A alíquota ISS não pode ser negativa.");
+      return;
+    }
+
+    const issuedAt = new Date().toISOString();
+    const nfse: MockNfse = {
+      appointmentId: appointment.id,
+      number: buildMockNfseNumber(appointment.id),
+      rps: buildMockRps(appointment.id),
+      issuedAt,
+      serviceCode: draft.serviceCode.trim() || "140501",
+      serviceDescription: draft.serviceDescription.trim() || "Prestação de serviço",
+      amount,
+      issRate,
+      issValue: amount * (issRate / 100),
+      customerDocument: draft.customerDocument.trim(),
+      customerEmail: draft.customerEmail.trim(),
+      whatsappSentAt: null,
+    };
+
+    setMockNfseByAppointmentId((prev) => ({ ...prev, [appointment.id]: nfse }));
+    setFeedback(`NFS-e mock ${nfse.number} gerada para ${appointment.clientName}.`);
+  }
+
+  function handleSendMockNfseViaWhatsapp(appointment: BarberAppointment) {
+    const nfse = mockNfseByAppointmentId[appointment.id];
+    if (!nfse) {
+      setFeedback("Gere a NFS-e mock antes de enviar no WhatsApp.");
+      return;
+    }
+
+    const phone = normalizeWhatsappPhone(appointment.clientPhone);
+    if (!phone) {
+      setFeedback("Telefone do cliente inválido para envio no WhatsApp.");
+      return;
+    }
+
+    const issuedAtLabel = formatDateTime(nfse.issuedAt);
+    const message = [
+      `Olá ${appointment.clientName}, segue sua NFS-e (mock):`,
+      `Número: ${nfse.number}`,
+      `RPS: ${nfse.rps}`,
+      `Serviço: ${nfse.serviceDescription}`,
+      `Código do serviço: ${nfse.serviceCode}`,
+      `Valor: ${formatCurrency(nfse.amount)}`,
+      `ISS (${nfse.issRate.toFixed(2)}%): ${formatCurrency(nfse.issValue)}`,
+      `Emissão: ${issuedAtLabel}`,
+      `Prestador: ${companyName}`,
+      "",
+      "Mensagem automática de demonstração (sem backend).",
+    ].join("\n");
+
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+
+    const whatsappSentAt = new Date().toISOString();
+    setMockNfseByAppointmentId((prev) => ({
+      ...prev,
+      [appointment.id]: {
+        ...nfse,
+        whatsappSentAt,
+      },
+    }));
+    setFeedback("Mensagem da NFS-e aberta no WhatsApp (mock).");
   }
 
   if (loading) {
@@ -1218,6 +1448,122 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                         </div>
                       ) : null}
                     </div>
+
+                    {bookingSector === "car_wash" && selectedNfseDraft ? (
+                      <div className="mt-4 rounded-xl border border-border bg-background/70 p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">NFS-e (mock)</p>
+                            <p className="text-xs text-muted-foreground">Gere a nota para este agendamento e envie por WhatsApp.</p>
+                          </div>
+                          <Badge variant={selectedMockNfse ? "outline" : "secondary"}>
+                            {selectedMockNfse ? `NFS-e ${selectedMockNfse.number}` : "Pendente"}
+                          </Badge>
+                        </div>
+
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                          <div className="space-y-1">
+                            <p className="text-xs font-medium text-muted-foreground">Código do serviço</p>
+                            <Input
+                              value={selectedNfseDraft.serviceCode}
+                              onChange={(event) =>
+                                updateNfseDraftField(selectedDayAppointment, "serviceCode", event.target.value)
+                              }
+                              placeholder="140501"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs font-medium text-muted-foreground">Alíquota ISS (%)</p>
+                            <Input
+                              value={selectedNfseDraft.issRate}
+                              onChange={(event) =>
+                                updateNfseDraftField(selectedDayAppointment, "issRate", event.target.value)
+                              }
+                              placeholder="5"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs font-medium text-muted-foreground">Valor do serviço</p>
+                            <Input
+                              value={selectedNfseDraft.amount}
+                              onChange={(event) =>
+                                updateNfseDraftField(selectedDayAppointment, "amount", event.target.value)
+                              }
+                              placeholder="120,00"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs font-medium text-muted-foreground">CPF/CNPJ (opcional)</p>
+                            <Input
+                              value={selectedNfseDraft.customerDocument}
+                              onChange={(event) =>
+                                updateNfseDraftField(selectedDayAppointment, "customerDocument", event.target.value)
+                              }
+                              placeholder="000.000.000-00"
+                            />
+                          </div>
+                          <div className="space-y-1 sm:col-span-2">
+                            <p className="text-xs font-medium text-muted-foreground">Email do tomador (opcional)</p>
+                            <Input
+                              value={selectedNfseDraft.customerEmail}
+                              onChange={(event) =>
+                                updateNfseDraftField(selectedDayAppointment, "customerEmail", event.target.value)
+                              }
+                              placeholder="cliente@dominio.com"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="mt-2 space-y-1">
+                          <p className="text-xs font-medium text-muted-foreground">Descrição do serviço</p>
+                          <textarea
+                            value={selectedNfseDraft.serviceDescription}
+                            onChange={(event) =>
+                              updateNfseDraftField(selectedDayAppointment, "serviceDescription", event.target.value)
+                            }
+                            rows={3}
+                            className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            placeholder="Descreva o serviço executado."
+                          />
+                        </div>
+
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Button type="button" size="sm" onClick={() => handleCreateMockNfse(selectedDayAppointment)}>
+                            <FileText className="mr-1.5 h-3.5 w-3.5" />
+                            Gerar NFS-e mock
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={!selectedMockNfse}
+                            onClick={() => handleSendMockNfseViaWhatsapp(selectedDayAppointment)}
+                          >
+                            <MessageCircle className="mr-1.5 h-3.5 w-3.5" />
+                            Enviar por WhatsApp (mock)
+                          </Button>
+                        </div>
+
+                        {selectedMockNfse ? (
+                          <div className="mt-3 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                            <p>
+                              <span className="font-semibold text-foreground">NFS-e:</span> {selectedMockNfse.number} ({selectedMockNfse.rps})
+                            </p>
+                            <p>
+                              <span className="font-semibold text-foreground">Valor:</span> {formatCurrency(selectedMockNfse.amount)} | ISS:{" "}
+                              {formatCurrency(selectedMockNfse.issValue)}
+                            </p>
+                            <p>
+                              <span className="font-semibold text-foreground">Emitida em:</span> {formatDateTime(selectedMockNfse.issuedAt)}
+                            </p>
+                            <p>
+                              <span className="font-semibold text-foreground">Envio WhatsApp:</span>{" "}
+                              {selectedMockNfse.whatsappSentAt ? formatDateTime(selectedMockNfse.whatsappSentAt) : "não enviado"}
+                            </p>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
 
                     {selectedDayAppointment.status === "scheduled" ? (
                       <div className="mt-4 grid gap-2">
