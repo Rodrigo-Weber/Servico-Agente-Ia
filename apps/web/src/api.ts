@@ -16,6 +16,10 @@ import {
   BillingConversation,
   BillingMessage,
   OwnerDashboardSummary,
+  NfseConfig,
+  NfseDocument,
+  NfseDashboard,
+  CompanyTemplate,
 } from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? "http://localhost:3333" : "");
@@ -908,5 +912,81 @@ export const api = {
         },
       ],
     };
+  },
+
+  // ─── NFS-e ────────────────────────────────────────────────────────────
+
+  getNfseConfig(token: string) {
+    return request<NfseConfig>("/nfse/config", { token });
+  },
+
+  updateNfseConfig(token: string, payload: Partial<NfseConfig>) {
+    return request<NfseConfig>("/nfse/config", {
+      method: "PUT",
+      token,
+      body: payload,
+    });
+  },
+
+  getNfseTemplates(token: string) {
+    return request<CompanyTemplate[]>("/nfse/templates", { token });
+  },
+
+  emitirNfse(
+    token: string,
+    payload: {
+      valorServicos: number;
+      descricao: string;
+      tomadorNome?: string;
+      tomadorDocumento?: string;
+      tomadorEmail?: string;
+      tomadorTelefone?: string;
+    },
+  ) {
+    return request<NfseDocument>("/nfse/emitir", {
+      method: "POST",
+      token,
+      body: payload,
+    });
+  },
+
+  emitirNfsePorAgendamento(token: string, appointmentId: string) {
+    return request<NfseDocument>(`/nfse/emitir-por-agendamento/${appointmentId}`, {
+      method: "POST",
+      token,
+    });
+  },
+
+  getNfseStatus(token: string, nfseId: string) {
+    return request<NfseDocument>(`/nfse/status/${nfseId}`, { token });
+  },
+
+  listNfse(token: string, page = 1, limit = 20) {
+    return request<{ data: NfseDocument[]; total: number; page: number; limit: number }>(
+      `/nfse/?page=${page}&limit=${limit}`,
+      { token },
+    );
+  },
+
+  getNfsePdf(token: string, nfseId: string) {
+    return request<{ pdf: string; filename: string }>(`/nfse/pdf/${nfseId}`, { token });
+  },
+
+  enviarNfseWhatsapp(token: string, nfseId: string) {
+    return request<{ success: boolean }>(`/nfse/enviar-whatsapp/${nfseId}`, {
+      method: "POST",
+      token,
+    });
+  },
+
+  cancelarNfse(token: string, nfseId: string) {
+    return request<NfseDocument>(`/nfse/cancelar/${nfseId}`, {
+      method: "POST",
+      token,
+    });
+  },
+
+  getNfseDashboard(token: string) {
+    return request<NfseDashboard>("/nfse/dashboard", { token });
   },
 };

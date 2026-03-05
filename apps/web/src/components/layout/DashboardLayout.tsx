@@ -60,7 +60,7 @@ export function DashboardLayout({
       {sidebarOpen ? (
         <div className="absolute inset-0 z-50 flex lg:hidden">
           <div
-            className="fixed inset-0 bg-background/80 backdrop-blur-sm animate-fade-in"
+            className="fixed inset-0 bg-background/60 backdrop-blur-sm animate-fade-in"
             onClick={() => setSidebarOpen(false)}
           />
           <Sidebar
@@ -87,8 +87,8 @@ export function DashboardLayout({
           isSidebarCollapsed={sidebarCollapsed}
           sessionCountdownLabel={sessionCountdownLabel}
         />
-        <main className="flex-1 overflow-auto px-3 pb-8 pt-5 sm:px-5 md:px-6 lg:px-8">
-          <div className="mx-auto w-full enter-up">{children}</div>
+        <main className="flex-1 overflow-auto px-4 pb-8 pt-6 sm:px-6 md:px-8 lg:px-10 bg-gradient-to-b from-muted/20 to-transparent">
+          <div className="mx-auto w-full max-w-7xl enter-up">{children}</div>
         </main>
       </div>
     </div>

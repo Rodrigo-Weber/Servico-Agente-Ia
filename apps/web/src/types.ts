@@ -409,3 +409,64 @@ export interface BillingDashboardSummary {
     overdueCount: number;
   };
 }
+
+// ─── NFS-e Types ────────────────────────────────────────────────────────────
+
+export type NfseStatus = "pending" | "processing" | "authorized" | "rejected" | "canceled" | "error";
+
+export interface NfseConfig {
+  id: string;
+  companyId: string;
+  provider: string;
+  apiToken: string;
+  environment: "homologacao" | "producao";
+  razaoSocial: string;
+  cnpj: string;
+  inscricaoMunicipal: string;
+  codigoMunicipio: string;
+  itemListaServico: string;
+  aliquotaIss: number;
+  issRetido: boolean;
+  descricaoPadrao: string;
+  autoEmitir: boolean;
+}
+
+export interface NfseDocument {
+  id: string;
+  companyId: string;
+  appointmentId: string | null;
+  ref: string;
+  status: NfseStatus;
+  valorServicos: number;
+  descricao: string;
+  tomadorNome: string | null;
+  tomadorDocumento: string | null;
+  tomadorEmail: string | null;
+  tomadorTelefone: string | null;
+  providerRef: string | null;
+  providerUrl: string | null;
+  pdfUrl: string | null;
+  whatsappSentAt: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NfseDashboard {
+  total: number;
+  authorized: number;
+  pending: number;
+  rejected: number;
+  canceled: number;
+  totalValue: number;
+  whatsappSent: number;
+}
+
+export interface CompanyTemplate {
+  slug: string;
+  name: string;
+  description: string;
+  aiType: string;
+  bookingSector: string;
+  icon: string;
+}

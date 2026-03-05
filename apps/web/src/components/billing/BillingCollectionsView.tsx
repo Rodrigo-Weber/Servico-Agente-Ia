@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
 import { BillingClient, BillingDocument } from "../../types";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/Card";
@@ -378,7 +378,7 @@ export function BillingCollectionsView({ token }: BillingCollectionsViewProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-col gap-4 rounded-xl border border-border/50 bg-card p-4 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-3">
           <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
             <Settings className="h-5 w-5" />
@@ -456,7 +456,7 @@ export function BillingCollectionsView({ token }: BillingCollectionsViewProps) {
       </div>
 
       {tab !== "clients" ? (
-        <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card/60 p-3">
+        <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border/50 bg-card/60 p-3">
           <div className="min-w-[170px]">
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Mes</label>
             <Select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} fullWidth={false} className="w-[170px]">
@@ -543,7 +543,7 @@ export function BillingCollectionsView({ token }: BillingCollectionsViewProps) {
                 paginatedClients.map((client) => (
                   <div
                     key={client.id}
-                    className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 transition-colors hover:bg-muted/50 md:flex-row md:items-center md:justify-between"
+                    className="flex flex-col gap-4 rounded-xl border border-border/50 bg-card p-4 transition-colors hover:bg-muted/50 md:flex-row md:items-center md:justify-between"
                   >
                     <div className="flex flex-1 flex-col justify-center">
                       <div className="flex items-center gap-2">
@@ -582,7 +582,7 @@ export function BillingCollectionsView({ token }: BillingCollectionsViewProps) {
               {paginatedDocs.map((doc) => (
                 <div
                   key={doc.id}
-                  className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 transition-colors hover:bg-muted/50 md:flex-row md:items-center md:justify-between"
+                  className="flex flex-col gap-4 rounded-xl border border-border/50 bg-card p-4 transition-colors hover:bg-muted/50 md:flex-row md:items-center md:justify-between"
                 >
                   <div className="flex flex-1 flex-col justify-center">
                     <div className="flex items-center gap-2">
@@ -687,11 +687,11 @@ export function BillingCollectionsView({ token }: BillingCollectionsViewProps) {
             onClick={() => setBarcodePreview(null)}
           />
 
-          <Card className="relative z-10 w-full max-w-3xl border-border bg-card shadow-2xl">
+          <Card className="relative z-10 w-full max-w-3xl border-border/50 bg-card shadow-2xl">
             <CardHeader>
               <CardTitle>Codigo do boleto</CardTitle>
               <CardDescription>
-                {barcodePreview.clientName} • {barcodePreview.description}
+                {barcodePreview.clientName} â€¢ {barcodePreview.description}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">

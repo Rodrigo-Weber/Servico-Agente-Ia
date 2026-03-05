@@ -13,23 +13,27 @@ interface HeaderProps {
 
 export function Header({ title, subtitle, onMenuClick, onToggleSidebar, isSidebarCollapsed, sessionCountdownLabel }: HeaderProps) {
   return (
-    <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-background/70 px-4 backdrop-blur-2xl md:px-6 sticky top-0 z-40 transition-colors">
+    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border/50 bg-header-bg px-4 backdrop-blur-xl md:px-6 sticky top-0 z-40 transition-colors duration-300">
       <div className="flex w-full items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" className="lg:hidden hover:bg-background/80" onClick={onMenuClick}>
-            <Menu className="h-5 w-5" />
+        <div className="flex items-center gap-2.5">
+          <Button variant="ghost" size="icon" className="lg:hidden h-8 w-8" onClick={onMenuClick}>
+            <Menu className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" className="hidden lg:inline-flex hover:bg-background/80" onClick={onToggleSidebar}>
-            {isSidebarCollapsed ? <PanelLeftOpen className="h-5 w-5 text-muted-foreground" /> : <PanelLeftClose className="h-5 w-5 text-muted-foreground" />}
+          <Button variant="ghost" size="icon" className="hidden lg:inline-flex h-8 w-8" onClick={onToggleSidebar}>
+            {isSidebarCollapsed
+              ? <PanelLeftOpen className="h-4 w-4 text-muted-foreground" />
+              : <PanelLeftClose className="h-4 w-4 text-muted-foreground" />}
           </Button>
+          <div className="h-5 w-px bg-border/60 hidden md:block" />
           <div>
-            <h1 className="text-lg font-bold text-foreground sm:text-xl">{title}</h1>
-            {subtitle ? <p className="hidden text-xs text-muted-foreground md:block">{subtitle}</p> : null}
+            <h1 className="text-sm font-semibold text-foreground tracking-tight sm:text-base">{title}</h1>
+            {subtitle ? <p className="hidden text-[11px] text-muted-foreground/80 md:block">{subtitle}</p> : null}
           </div>
         </div>
         <div className="flex items-center gap-2">
           {sessionCountdownLabel ? (
-            <div className="shrink-0 rounded-full border border-green-500/25 bg-green-500/10 px-3 py-1 text-xs font-semibold text-green-700 dark:text-green-400">
+            <div className="shrink-0 rounded-full border border-emerald-500/20 bg-emerald-500/8 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 animate-pulse">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 mr-1.5 align-middle" />
               {sessionCountdownLabel}
             </div>
           ) : null}

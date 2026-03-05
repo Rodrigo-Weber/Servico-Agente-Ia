@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api";
 import { BillingConversation, BillingMessage } from "../../types";
 import {
@@ -237,7 +237,7 @@ export function CrmPanelView({ token }: CrmPanelViewProps) {
   return (
     <>
       <div className="grid h-[calc(100vh-150px)] min-h-[560px] grid-cols-1 gap-4 md:grid-cols-[340px_minmax(0,1fr)]">
-        <aside className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-card/80">
+        <aside className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border/50 bg-card/80">
           <div className="border-b border-border bg-muted/10 p-4">
             <h2 className="text-lg font-bold text-foreground">CRM Financeiro</h2>
             <p className="mt-1 text-xs text-muted-foreground">Central de conversas com clientes e histórico de cobrança.</p>
@@ -271,7 +271,7 @@ export function CrmPanelView({ token }: CrmPanelViewProps) {
                     onClick={() => setSelectedPhone(conversation.phoneE164)}
                     className={`w-full rounded-xl border p-3 text-left transition ${selected
                         ? "border-emerald-500/50 bg-emerald-500/10 shadow-[0_0_0_1px_rgba(16,185,129,0.15)]"
-                        : "border-border bg-card/40 hover:border-emerald-500/30 hover:bg-muted/40"
+                        : "border-border/50 bg-card/40 hover:border-emerald-500/30 hover:bg-muted/40"
                       }`}
                     >
                       <div className="flex items-center gap-3">
@@ -299,7 +299,7 @@ export function CrmPanelView({ token }: CrmPanelViewProps) {
           </div>
         </aside>
 
-        <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-card/80">
+        <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border/50 bg-card/80">
           {selectedConversation ? (
             <>
               <header className="flex items-center justify-between gap-4 border-b border-border bg-muted/10 p-4">
@@ -336,7 +336,7 @@ export function CrmPanelView({ token }: CrmPanelViewProps) {
                     <Loader2 className="h-6 w-6 animate-spin text-emerald-400" />
                   </div>
                 ) : crmMessages.length === 0 ? (
-                  <div className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/30 p-6 text-center">
+                  <div className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-border/50 bg-card/30 p-6 text-center">
                     <MessageSquare className="mb-3 h-6 w-6 text-muted-foreground" />
                     <p className="text-sm font-semibold text-foreground">Nenhuma mensagem nesta conversa</p>
                     <p className="mt-1 text-xs text-muted-foreground">Envie uma mensagem para iniciar o atendimento.</p>
@@ -350,7 +350,7 @@ export function CrmPanelView({ token }: CrmPanelViewProps) {
                       return (
                         <div key={message.id} className={`flex ${outgoing ? "justify-end" : "justify-start"}`}>
                           <div
-                            className={`max-w-[85%] rounded-2xl border px-4 py-2.5 shadow-sm ${outgoing
+                            className={`max-w-[85%] rounded-2xl border px-4 py-2.5 shadow-soft ${outgoing
                                 ? "rounded-br-md border-primary/20 bg-primary/10"
                                 : "rounded-bl-md border-border bg-muted/20"
                               }`}
@@ -383,7 +383,7 @@ export function CrmPanelView({ token }: CrmPanelViewProps) {
                             ) : null}
                             <div className="mt-1.5 flex items-center justify-end gap-2 text-[10px] text-muted-foreground">
                               <span>{outgoing ? "Voce" : "Cliente"}</span>
-                              <span>•</span>
+                              <span>â€¢</span>
                               <span>{formatMessageTime(message.createdAt)}</span>
                             </div>
                           </div>
@@ -414,7 +414,7 @@ export function CrmPanelView({ token }: CrmPanelViewProps) {
             </>
           ) : (
             <div className="flex h-full flex-col items-center justify-center p-8 text-center">
-              <div className="mb-4 grid h-16 w-16 place-items-center rounded-2xl border border-border bg-card">
+              <div className="mb-4 grid h-16 w-16 place-items-center rounded-2xl border border-border/50 bg-card">
                 <MessageSquare className="h-6 w-6 text-muted-foreground" />
               </div>
               <p className="text-sm font-semibold text-foreground">Selecione uma conversa</p>

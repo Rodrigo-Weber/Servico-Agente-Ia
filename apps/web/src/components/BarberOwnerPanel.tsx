@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+﻿﻿import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { ComponentType } from "react";
 import {
   CalendarClock,
@@ -27,6 +27,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/
 import { Input } from "./ui/Input";
 import { SkeletonDashboard } from "./ui/Skeleton";
 import { cn } from "../lib/utils";
+import { NfsePanel } from "./NfsePanel";
 
 interface BarberOwnerPanelProps {
   token: string;
@@ -71,7 +72,7 @@ const HOUR_ROW_HEIGHT = 64;
 const DAY_START_MINUTES = DAY_START_HOUR * 60;
 const DAY_END_MINUTES = (DAY_END_HOUR + 1) * 60;
 const DAY_TIMELINE_HEIGHT = ((DAY_END_MINUTES - DAY_START_MINUTES) / 60) * HOUR_ROW_HEIGHT;
-const APPOINTMENT_DELETE_CONFIRM_TEXT = "confirmar exclusão";
+const APPOINTMENT_DELETE_CONFIRM_TEXT = "confirmar exclusÀo";
 
 interface DayAppointmentLayout {
   appointment: BarberAppointment;
@@ -301,7 +302,7 @@ function createDefaultNfseDraft(
   appointment: BarberAppointment,
   sector: "barber" | "clinic" | "car_wash" | "generic",
 ): NfseDraft {
-  const fallbackServiceName = sector === "car_wash" ? "Lavagem de veículo" : "Prestação de serviço";
+  const fallbackServiceName = sector === "car_wash" ? "Lavagem de veículo" : "PrestaçÀo de serviço";
   const serviceName = appointment.service?.name || fallbackServiceName;
   const defaultCode = sector === "car_wash" ? "140501" : "140101";
 
@@ -827,7 +828,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
     }
 
     if (normalizeConfirmationInput(typed) !== normalizeConfirmationInput(APPOINTMENT_DELETE_CONFIRM_TEXT)) {
-      setFeedback('Texto de confirmação inválido. Digite exatamente: "confirmar exclusão".');
+      setFeedback('Texto de confirmaçÀo inválido. Digite exatamente: "confirmar exclusÀo".');
       return;
     }
 
@@ -872,7 +873,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
     }
 
     if (issRate < 0) {
-      setFeedback("A alíquota ISS não pode ser negativa.");
+      setFeedback("A alíquota ISS nÀo pode ser negativa.");
       return;
     }
 
@@ -883,7 +884,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
       rps: buildMockRps(appointment.id),
       issuedAt,
       serviceCode: draft.serviceCode.trim() || "140501",
-      serviceDescription: draft.serviceDescription.trim() || "Prestação de serviço",
+      serviceDescription: draft.serviceDescription.trim() || "PrestaçÀo de serviço",
       amount,
       issRate,
       issValue: amount * (issRate / 100),
@@ -918,10 +919,10 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
       `Código do serviço: ${nfse.serviceCode}`,
       `Valor: ${formatCurrency(nfse.amount)}`,
       `ISS (${nfse.issRate.toFixed(2)}%): ${formatCurrency(nfse.issValue)}`,
-      `Emissão: ${issuedAtLabel}`,
+      `EmissÀo: ${issuedAtLabel}`,
       `Prestador: ${companyName}`,
       "",
-      "Mensagem automática de demonstração (sem backend).",
+      "Mensagem automática de demonstraçÀo (sem backend).",
     ].join("\n");
 
     const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
@@ -988,7 +989,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                 if (!draft) return null;
 
                 return (
-                  <div key={barber.id} className="rounded-xl border border-border bg-muted/50 p-3">
+                  <div key={barber.id} className="rounded-xl border border-border/50 bg-muted/30 p-3">
                     <div className="grid gap-2 md:grid-cols-3">
                       <Input
                         placeholder="Nome"
@@ -1056,7 +1057,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
             {selectedBarberId ? (
               <>
                 {hoursDraft.map((entry) => (
-                  <div key={entry.weekday} className="grid items-center gap-2 rounded-xl border border-border bg-muted/50 p-2 grid-cols-2 lg:grid-cols-[90px_1fr_1fr_auto]">
+                  <div key={entry.weekday} className="grid items-center gap-2 rounded-xl border border-border/50 bg-muted/30 p-2 grid-cols-2 lg:grid-cols-[90px_1fr_1fr_auto]">
                     <span className="col-span-2 text-sm font-semibold lg:col-span-1">{WEEKDAY_LABELS[entry.weekday]}</span>
                     <Input
                       type="time"
@@ -1161,7 +1162,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                 if (!draft) return null;
 
                 return (
-                  <div key={service.id} className="rounded-xl border border-border bg-muted/50 p-3">
+                  <div key={service.id} className="rounded-xl border border-border/50 bg-muted/30 p-3">
                     <Input
                       value={draft.name}
                       onChange={(e) => setServiceDrafts((prev) => ({ ...prev, [service.id]: { ...draft, name: e.target.value } }))}
@@ -1229,7 +1230,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
 
     return (
       <div className="space-y-6">
-        <Card className="rounded-xl border border-border bg-card">
+        <Card className="rounded-xl border border-border/50 bg-card">
           <CardHeader className="pb-4">
             <CardTitle>Novo agendamento</CardTitle>
             <CardDescription className="hidden sm:block">Cadastre atendimentos de forma rapida.</CardDescription>
@@ -1290,7 +1291,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
           </CardContent>
         </Card>
 
-        <Card className="rounded-xl border border-border bg-card">
+        <Card className="rounded-xl border border-border/50 bg-card">
           <CardHeader className="space-y-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -1310,7 +1311,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                 </Button>
               </div>
             </div>
-            <div className="rounded-xl border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+            <div className="rounded-xl border border-border/50 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
               <span className="font-semibold capitalize text-foreground">{formatInputDateLabel(selectedDate)}</span>
               {" | "}
               {dayAppointments.length} agendamento(s) no dia
@@ -1354,7 +1355,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-              <div className="rounded-xl border border-border bg-muted/50 p-3">
+              <div className="rounded-xl border border-border/50 bg-muted/30 p-3">
                 <div className="relative min-h-[620px] overflow-x-auto">
                   <div className="relative min-w-[340px] sm:min-w-[480px] md:min-w-full" style={{ height: `${DAY_TIMELINE_HEIGHT}px` }}>
                     {timelineHours.map((hour, index) => (
@@ -1379,7 +1380,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                           key={item.appointment.id}
                           type="button"
                           onClick={() => setSelectedAppointmentId(item.appointment.id)}
-                          className={`absolute left-[72px] right-2 rounded-xl border px-3 py-2 text-left transition ${toneClass} ${isSelected ? "ring-2 ring-primary/45 shadow-sm" : "hover:shadow-sm"
+                          className={`absolute left-[72px] right-2 rounded-xl border px-3 py-2 text-left transition ${toneClass} ${isSelected ? "ring-2 ring-primary/45 shadow-soft" : "hover:shadow-soft"
                             }`}
                           style={{ top: `${item.top}px`, height: `${item.height}px` }}
                         >
@@ -1394,7 +1395,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
 
                     {!loadingDayAppointments && dayAppointmentsLayout.length === 0 ? (
                       <div className="absolute inset-0 grid place-items-center pl-16 pr-3">
-                        <p className="rounded-xl border border-dashed border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
+                        <p className="rounded-xl border border-dashed border-border/50 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
                           Nenhum agendamento para este dia.
                         </p>
                       </div>
@@ -1414,7 +1415,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
 
               <div className="space-y-3">
                 {selectedDayAppointment ? (
-                  <div className="rounded-xl border border-border bg-muted/50 p-4">
+                  <div className="rounded-xl border border-border/50 bg-muted/30 p-4">
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Detalhes</p>
@@ -1515,14 +1516,14 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                         </div>
 
                         <div className="mt-2 space-y-1">
-                          <p className="text-xs font-medium text-muted-foreground">Descrição do serviço</p>
+                          <p className="text-xs font-medium text-muted-foreground">DescriçÀo do serviço</p>
                           <textarea
                             value={selectedNfseDraft.serviceDescription}
                             onChange={(event) =>
                               updateNfseDraftField(selectedDayAppointment, "serviceDescription", event.target.value)
                             }
                             rows={3}
-                            className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-soft transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                             placeholder="Descreva o serviço executado."
                           />
                         </div>
@@ -1545,7 +1546,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                         </div>
 
                         {selectedMockNfse ? (
-                          <div className="mt-3 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                          <div className="mt-3 rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                             <p>
                               <span className="font-semibold text-foreground">NFS-e:</span> {selectedMockNfse.number} ({selectedMockNfse.rps})
                             </p>
@@ -1558,7 +1559,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                             </p>
                             <p>
                               <span className="font-semibold text-foreground">Envio WhatsApp:</span>{" "}
-                              {selectedMockNfse.whatsappSentAt ? formatDateTime(selectedMockNfse.whatsappSentAt) : "não enviado"}
+                              {selectedMockNfse.whatsappSentAt ? formatDateTime(selectedMockNfse.whatsappSentAt) : "nÀo enviado"}
                             </p>
                           </div>
                         ) : null}
@@ -1600,13 +1601,13 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                     </div>
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-dashed border-border bg-muted/50 px-4 py-8 text-center text-sm text-muted-foreground">
+                  <div className="rounded-xl border border-dashed border-border/50 bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
                     Clique em um agendamento para ver os detalhes.
                   </div>
                 )}
 
                 {dayAppointments.length > 0 ? (
-                  <div className="rounded-xl border border-border bg-muted/50 p-3">
+                  <div className="rounded-xl border border-border/50 bg-muted/30 p-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Lista rapida</p>
                     <div className="mt-2 space-y-2">
                       {dayAppointments.map((appointment) => (
@@ -1636,6 +1637,10 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
     );
   }
 
+  if (activeView === "nfse") {
+    return <NfsePanel token={token} />;
+  }
+
   if (activeView === "settings") {
     return (
       <div className="space-y-6">
@@ -1648,7 +1653,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="rounded-xl border border-border bg-muted/50 p-3">
+              <div className="rounded-xl border border-border/50 bg-muted/30 p-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status da sessao</p>
                 <div className="mt-2 flex items-center gap-2">
                   <Badge variant={statusTone.badge}>{statusTone.text}</Badge>
@@ -1698,11 +1703,11 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
             </CardHeader>
             <CardContent>
               {qrCode ? (
-                <div className="rounded-xl border border-border bg-muted/50 p-3">
+                <div className="rounded-xl border border-border/50 bg-muted/30 p-3">
                   <img src={qrCode} alt="QR code WhatsApp" className="mx-auto w-full max-w-[320px] rounded-md border border-border bg-white p-2" />
                 </div>
               ) : (
-                <div className="rounded-xl border border-dashed border-border bg-muted/50 px-3 py-8 text-center text-sm text-muted-foreground">
+                <div className="rounded-xl border border-dashed border-border/50 bg-muted/30 px-3 py-8 text-center text-sm text-muted-foreground">
                   QR code indisponivel no momento.
                 </div>
               )}
@@ -1728,7 +1733,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl border border-border bg-muted/50 p-5">
+      <div className="rounded-2xl border border-border/50 bg-muted/30 p-5">
         <p className="text-sm text-muted-foreground">Operacao da empresa</p>
         <h2 className="font-display text-2xl font-bold">{companyName}</h2>
       </div>
@@ -1750,7 +1755,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
         <CardContent className="space-y-2">
           {nextAppointments.length === 0 ? <p className="text-sm text-muted-foreground">Nenhum agendamento encontrado.</p> : null}
           {nextAppointments.map((appointment) => (
-            <div key={appointment.id} className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-3 py-2">
+            <div key={appointment.id} className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/30 px-3 py-2">
               <div>
                 <p className="text-sm font-semibold">{appointment.clientName}</p>
                 <p className="text-xs text-muted-foreground">{appointment.service?.name || "-"}</p>
@@ -1779,7 +1784,7 @@ function StatCard({
   const valueIsNumeric = typeof value === "number";
 
   return (
-    <Card className="h-full min-h-[108px] border-border bg-card transition-all hover:border-primary/25 hover:bg-muted/50">
+    <Card className="h-full min-h-[108px] border-border/50 bg-card transition-all hover:border-primary/25 hover:bg-muted/50">
       <CardContent className="grid h-full grid-cols-[auto_minmax(0,1fr)] items-center gap-4 p-4 sm:p-5">
         <div className="grid h-11 w-11 place-items-center rounded-xl bg-primary/12 text-primary ring-1 ring-inset ring-primary/20">
           <Icon className="h-5 w-5" />

@@ -16,6 +16,7 @@ import {
   Users2,
   X,
   CarFront,
+  FileCheck2,
 } from "lucide-react";
 import { AuthSession } from "../../types";
 import { cn } from "../../lib/utils";
@@ -60,7 +61,6 @@ function getNavItems(session: AuthSession): NavItem[] {
   }
 
   if (serviceType === "barber_booking") {
-    // Determine the appropriate label based on the booking sector
     let labelResource = "Barbeiros";
     if (session.user.bookingSector === "car_wash") labelResource = "Boxes/Vagas";
     if (session.user.bookingSector === "clinic") labelResource = "Profissionais";
@@ -75,7 +75,8 @@ function getNavItems(session: AuthSession): NavItem[] {
       { id: "barbers", label: labelResource, icon: Users2 },
       { id: "services", label: "Servicos", icon: iconService },
       { id: "appointments", label: "Agenda", icon: CalendarDays },
-      { id: "settings", label: "Atendimento IA", icon: MessageSquare },
+      { id: "nfse", label: "NFS-e", icon: FileCheck2 },
+      { id: "settings", label: "Configurações", icon: ShieldCheck },
     ];
   }
 
@@ -85,7 +86,7 @@ function getNavItems(session: AuthSession): NavItem[] {
       { id: "collections", label: "Cobranças", icon: ReceiptText },
       { id: "crm", label: "CRM (Mensagens)", icon: MessageSquare },
       { id: "settings", label: "Configurações", icon: ShieldCheck },
-    ]
+    ];
   }
 
   return [
@@ -111,16 +112,16 @@ export function Sidebar({
   const bookingSector = session.user.bookingSector || "generic";
   const bookingRoleLabel =
     bookingSector === "car_wash"
-      ? "Empresa Lava Jato"
+      ? "Lava Jato"
       : bookingSector === "clinic"
-        ? "Empresa Clinica"
-        : "Empresa de Agendamento";
+        ? "Clinica"
+        : "Agendamentos";
   const bookingRoleSubtitle =
     bookingSector === "car_wash"
-      ? "Agente de agendamento para lava jato"
+      ? "Agendamento para lava jato"
       : bookingSector === "clinic"
-        ? "Agente de agendamento para clinica"
-        : "Agente de agendamento";
+        ? "Agendamento para clinica"
+        : "Agendamento inteligente";
   const roleLabel =
     session.user.role === "admin"
       ? "Administrador"
@@ -129,42 +130,42 @@ export function Sidebar({
         : session.user.serviceType === "barber_booking"
           ? bookingRoleLabel
           : session.user.serviceType === "billing"
-            ? "Gestão de Cobranças"
-            : "Empresa NF-e";
+            ? "Cobranças"
+            : "NF-e";
   const roleSubtitle =
     session.user.role === "admin"
-      ? "Gestao central de agentes"
+      ? "Gestão central"
       : session.user.role === "barber"
         ? "Agenda pessoal"
         : session.user.serviceType === "barber_booking"
           ? bookingRoleSubtitle
           : session.user.serviceType === "billing"
-            ? "Cobranças e CRM inteligente"
-            : "Gestao inteligente de NF-e";
+            ? "CRM inteligente"
+            : "Gestão fiscal";
   const compact = collapsed && !mobile;
 
   return (
     <aside
       className={cn(
-        "flex h-screen flex-col border-r border-border/60 bg-background/80 backdrop-blur-3xl transition-[width] duration-300 ease-out shadow-[1px_0_40px_rgba(0,0,0,0.02)] z-50",
-        compact ? "w-20" : "w-72",
-        mobile ? "w-[86vw] max-w-[330px]" : "",
+        "flex h-screen flex-col border-r bg-sidebar-bg border-sidebar-border transition-[width] duration-300 ease-in-out z-50",
+        compact ? "w-18" : "w-66",
+        mobile ? "w-[86vw] max-w-[320px]" : "",
         className,
       )}
     >
       {/* ── Logo ── */}
-      <div className={cn("border-b border-border flex h-16 items-center shrink-0", compact ? "px-3" : "px-5")}>
+      <div className={cn("flex h-16 items-center shrink-0 border-b border-sidebar-border", compact ? "px-2" : "px-4")}>
         <div className="flex w-full items-center justify-between gap-2">
           <div className={cn("flex items-center gap-3", compact ? "w-full justify-center" : "")}>
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm transition-transform hover:scale-105 duration-300">
-              <span className="font-mono text-xs font-bold">RW</span>
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-primary to-primary/80 text-primary-foreground shadow-glow-sm transition-transform hover:scale-105 duration-300">
+              <span className="font-mono text-xs font-black">RW</span>
             </div>
             {!compact ? (
               <div className="min-w-0">
-                <p className="font-mono text-base font-bold leading-tight text-foreground tracking-tight">
-                  {"<RW />"}
+                <p className="font-display text-sm font-bold leading-tight text-foreground tracking-tight">
+                  Weber Serviços
                 </p>
-                <p className="truncate text-[11px] text-muted-foreground">{roleSubtitle}</p>
+                <p className="truncate text-[11px] text-muted-foreground font-medium">{roleSubtitle}</p>
               </div>
             ) : null}
           </div>
@@ -173,7 +174,7 @@ export function Sidebar({
             <button
               type="button"
               onClick={onCloseMobile}
-              className="grid h-8 w-8 place-items-center rounded-lg border border-border bg-muted/50 text-muted-foreground transition hover:text-foreground"
+              className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:text-foreground hover:bg-muted/60"
             >
               <X className="h-4 w-4" />
             </button>
@@ -182,8 +183,13 @@ export function Sidebar({
       </div>
 
       {/* ── Nav ── */}
-      <div className={cn("flex-1 overflow-auto", compact ? "p-2 pt-5" : "p-3")}>
-        <nav className="space-y-1">
+      <div className={cn("flex-1 overflow-auto", compact ? "p-1.5 pt-4" : "p-3 pt-4")}>
+        {!compact && (
+          <p className="px-3 mb-2 text-[10px] font-bold uppercase tracking-[0.08em] text-muted-foreground/60">
+            Navegação
+          </p>
+        )}
+        <nav className="space-y-0.5">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeView === item.id;
@@ -194,14 +200,14 @@ export function Sidebar({
                 onClick={() => onNavigate?.(item.id)}
                 title={compact ? item.label : undefined}
                 className={cn(
-                  "flex w-full items-center rounded-xl text-sm font-semibold transition-all duration-300",
-                  compact ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2.5",
+                  "flex w-full items-center rounded-lg text-[13px] font-medium transition-all duration-200",
+                  compact ? "justify-center px-0 py-2.5 mx-auto" : "gap-3 px-3 py-2",
                   isActive
-                    ? "bg-primary/10 text-primary shadow-[inset_0_0_0_1px_rgba(16,185,129,0.2)]"
-                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                    ? "bg-primary/10 text-primary font-semibold shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.15)]"
+                    : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
                 )}
               >
-                <Icon className={cn("shrink-0", compact ? "h-5 w-5" : "h-4.5 w-4.5")} />
+                <Icon className={cn("shrink-0 transition-colors", compact ? "h-4.5 w-4.5" : "h-4 w-4")} />
                 {!compact ? <span>{item.label}</span> : null}
               </button>
             );
@@ -210,31 +216,27 @@ export function Sidebar({
       </div>
 
       {/* ── Footer ── */}
-      <div className={cn("border-t border-border", compact ? "p-2" : "p-3")}>
+      <div className={cn("border-t border-sidebar-border", compact ? "p-2" : "p-3")}>
         {!compact ? (
-          <div className="rounded-xl bg-muted/30 p-3">
-            <p className="truncate text-sm font-medium text-foreground">{session.user.email}</p>
-            <p className="text-[11px] text-muted-foreground">{roleLabel}</p>
+          <div className="rounded-xl bg-muted/30 p-3 space-y-2">
+            <div>
+              <p className="truncate text-sm font-medium text-foreground">{session.user.email}</p>
+              <p className="text-[11px] text-muted-foreground font-medium">{roleLabel}</p>
+            </div>
             <button
               onClick={onLogout}
-              className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-400 transition hover:bg-red-500/20"
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-1.5 text-xs font-semibold text-red-500 dark:text-red-400 transition-all hover:bg-red-500/10 hover:border-red-500/30"
             >
               <LogOut className="h-3.5 w-3.5" />
               Sair da conta
             </button>
           </div>
         ) : (
-          <div className="space-y-1 rounded-xl bg-muted/30 p-2 text-center">
-            <p
-              className="truncate text-[9px] font-semibold uppercase tracking-wide text-muted-foreground"
-              title={session.user.email}
-            >
-              {roleLabel}
-            </p>
+          <div className="space-y-1.5 text-center">
             <button
               onClick={onLogout}
               title="Sair da conta"
-              className="mt-1 grid h-8 w-full place-items-center rounded-lg border border-red-500/25 bg-red-500/10 text-red-400 transition hover:bg-red-500/20"
+              className="grid h-8 w-full place-items-center rounded-lg border border-red-500/20 bg-red-500/5 text-red-500 dark:text-red-400 transition-all hover:bg-red-500/10"
             >
               <LogOut className="h-3.5 w-3.5" />
             </button>

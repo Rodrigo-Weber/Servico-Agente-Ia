@@ -77,6 +77,15 @@ enum BillingDocumentStatus {
   overdue
 }
 
+enum NfseStatus {
+  pending
+  processing
+  authorized
+  rejected
+  canceled
+  error
+}
+
 model User {
   id            String         @id @default(cuid())
   role          UserRole
@@ -99,6 +108,7 @@ model Company {
   evolutionInstanceName String?          @unique
   aiType         CompanyAiType           @default(nfe_import)
   bookingSector  String                  @default("barber")
+  templateId     String?
   active         Boolean                 @default(true)
   createdAt      DateTime                @default(now())
   updatedAt      DateTime                @updatedAt
@@ -121,6 +131,8 @@ model Company {
   billingSuppliers BillingSupplier[]
   billingDocuments BillingDocument[]
   bookingCustomers BookingCustomer[]
+  nfseConfig     NfseConfig?
+  nfseDocuments  NfseServiceDocument[]
 }
 
 model BarberProfile {
@@ -522,4 +534,84 @@ model RefreshToken {
   createdAt DateTime @default(now())
 
   @@index([userId, expiresAt])
+}
+
+// ───── NFS-e de Serviço (integração real via FocusNFe / eNotas) ─────
+
+model NfseConfig {
+  id                      String   @id @default(cuid())
+  companyId               String   @unique
+  company                 Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  provider                String   @default("focusnfe") // focusnfe | enotas | nfse_io
+  apiToken                String?  @db.Text
+  environment             String   @default("homologacao") // producao | homologacao
+  inscricaoMunicipal      String?
+  codigoMunicipio         String?
+  regimeTributario        Int?     @default(1)
+  itemListaServico        String?  // ex: "14.01" para lava-jato
+  codigoTributarioMunicipio String?
+  aliquotaIss             Decimal? @db.Decimal(5, 4) // ex: 0.0500 = 5%
+  issRetido               Boolean  @default(false)
+  naturezaOperacao        Int?     @default(1)
+  descricaoPadrao         String?  @db.Text // template de discriminação
+  autoEmitir              Boolean  @default(false) // emitir NFS-e automaticamente ao concluir servico
+  enviarWhatsapp          Boolean  @default(true)  // enviar PDF via WhatsApp ao cliente
+  active                  Boolean  @default(true)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+}
+
+model NfseServiceDocument {
+  id                String      @id @default(cuid())
+  companyId         String
+  company           Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  appointmentId     String?
+  providerRef       String?     // ID da NFS-e no provedor (FocusNFe ref)
+  providerProtocol  String?     // Protocolo de autorização
+  numero            String?     // Número da NFS-e quando autorizada
+  codigoVerificacao String?     // Código de verificação
+  status            NfseStatus  @default(pending)
+  valorServicos     Decimal     @db.Decimal(15, 2)
+  aliquotaIss       Decimal?    @db.Decimal(5, 4)
+  valorIss          Decimal?    @db.Decimal(15, 2)
+  discriminacao     String      @db.Text
+  tomadorNome       String
+  tomadorDocumento  String?
+  tomadorEmail      String?
+  tomadorTelefone   String?
+  pdfUrl            String?     @db.Text
+  xmlUrl            String?     @db.Text
+  pdfBase64         String?     @db.LongText
+  providerPayload   Json?       // Payload completo enviado ao provedor
+  providerResponse  Json?       // Resposta completa do provedor
+  errorMessage      String?     @db.Text
+  emitidaEm         DateTime?
+  canceladaEm       DateTime?
+  whatsappSentAt    DateTime?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  @@index([companyId, status, createdAt])
+  @@index([companyId, appointmentId])
+  @@index([providerRef])
+}
+
+// ───── Templates de Empresa (onboarding rápido) ─────
+
+model CompanyTemplate {
+  id              String   @id @default(cuid())
+  slug            String   @unique // ex: "lava_jato", "barbearia", "clinica_estetica"
+  name            String   // ex: "Lava Jato"
+  description     String?  @db.Text
+  aiType          CompanyAiType
+  bookingSector   String   @default("generic")
+  icon            String?  // emoji ou nome de ícone Lucide
+  servicesJson    Json?    // array de serviços pré-configurados
+  workingHoursJson Json?   // grade horária padrão
+  promptTemplate  String?  @db.Text // prompt customizado para o setor
+  nfseDefaults    Json?    // configurações NFS-e padrão (itemListaServico, aliquota, etc.)
+  active          Boolean  @default(true)
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }

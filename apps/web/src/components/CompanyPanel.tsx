@@ -1,4 +1,4 @@
-﻿import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+﻿﻿﻿import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { ComponentType } from "react";
 import {
   AlertTriangle,
@@ -419,13 +419,13 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
         </div>
 
         {loadingMonitoring ? (
-          <div className="flex items-center gap-3 rounded-2xl border border-border bg-muted/50 p-6">
+          <div className="flex items-center gap-3 rounded-2xl border border-border/50 bg-muted/30 p-6">
             <RefreshCw className="h-5 w-5 animate-spin text-green-400" />
             <span className="text-sm font-semibold text-muted-foreground">Atualizando dados de monitoramento...</span>
           </div>
         ) : null}
 
-        <div className="rounded-xl border border-border bg-muted/50 px-4 py-3">
+        <div className="rounded-xl border border-border/50 bg-muted/30 px-4 py-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Agenda de sincronizacao</p>
           <p className="mt-1 text-sm font-semibold">O sync de NF-e roda apenas as 18:00, todos os dias.</p>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -503,7 +503,7 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
                 {certificate.daysRemaining !== null ? <span className="text-xs text-muted-foreground">{certificate.daysRemaining} dia(s) restantes</span> : null}
               </div>
 
-              <div className="grid gap-3 rounded-xl border border-border bg-muted/50 p-3 text-sm md:grid-cols-2">
+              <div className="grid gap-3 rounded-xl border border-border/50 bg-muted/30 p-3 text-sm md:grid-cols-2">
                 <InfoField label="Valido de" value={formatDate(certificate.validFrom)} />
                 <InfoField label="Valido ate" value={formatDate(certificate.validTo)} />
                 <InfoField label="Importado em" value={formatDateTime(certificate.createdAt)} />
@@ -516,7 +516,7 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
                   {removingCertificate ? "Excluindo..." : "Excluir certificado atual"}
                 </Button>
               ) : (
-                <div className="rounded-xl border border-dashed border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+                <div className="rounded-xl border border-dashed border-border/50 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
                   Nenhum certificado ativo encontrado.
                 </div>
               )}
@@ -618,14 +618,14 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
                 <EmptyState
                   icon={FileText}
                   title={nfeSearch || nfeStatusFilter !== "all" ? "Nenhuma nota encontrada" : "Sem notas processadas"}
-                  description={nfeSearch || nfeStatusFilter !== "all" ? "Tente ajustar os filtros de busca." : "As notas aparecerão aqui quando forem detectadas ou importadas."}
+                  description={nfeSearch || nfeStatusFilter !== "all" ? "Tente ajustar os filtros de busca." : "As notas aparecerÀo aqui quando forem detectadas ou importadas."}
                 />
               ) : null}
               {paginatedNfes.map((nfe) => (
                 <button
                   key={nfe.id}
                   onClick={() => void handleOpenNfe(nfe.id)}
-                  className="w-full rounded-xl border border-border bg-muted/50 px-3 py-2 text-left transition hover:bg-muted/50"
+                  className="w-full rounded-xl border border-border/50 bg-muted/30 px-3 py-2 text-left transition hover:bg-muted/50"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -641,9 +641,9 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
                 </button>
               ))}
 
-              {/* Paginação */}
+              {/* PaginaçÀo */}
               {filteredNfes.length > NFE_PAGE_SIZE ? (
-                <div className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-3 py-2">
+                <div className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/30 px-3 py-2">
                   <p className="text-xs text-muted-foreground">
                     Página {nfePage} de {nfeTotalPages}
                   </p>
@@ -692,7 +692,7 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
                     </Button>
                   </div>
 
-                  <div className="grid gap-3 rounded-xl border border-border bg-muted/50 p-3 text-sm md:grid-cols-2">
+                  <div className="grid gap-3 rounded-xl border border-border/50 bg-muted/30 p-3 text-sm md:grid-cols-2">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Chave</p>
                       <div className="mt-1 flex items-center gap-1.5">
@@ -761,7 +761,7 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl border border-border bg-muted/50 p-5">
+      <div className="rounded-2xl border border-border/50 bg-muted/30 p-5">
         <p className="text-sm text-muted-foreground">Operacao da empresa</p>
         <h2 className="font-display text-2xl font-bold text-foreground">{companyName}</h2>
       </div>
@@ -783,7 +783,7 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
         <CardContent className="space-y-2">
           {recentNfes.length === 0 ? <p className="text-sm text-muted-foreground">Nenhuma nota processada ainda.</p> : null}
           {recentNfes.map((nfe) => (
-            <div key={nfe.id} className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-3 py-2">
+            <div key={nfe.id} className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/30 px-3 py-2">
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold">{nfe.chave}</p>
                 <p className="text-xs text-muted-foreground">{nfe.emitenteNome || "Emitente nao identificado"}</p>

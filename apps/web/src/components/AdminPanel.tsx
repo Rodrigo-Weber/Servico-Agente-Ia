@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+﻿import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { ComponentType } from "react";
 import {
   Activity,
@@ -210,7 +210,10 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
   const [newNumber, setNewNumber] = useState("");
   const [nfePrompt, setNfePrompt] = useState("");
   const [barberPrompt, setBarberPrompt] = useState("");
-  const [activePromptTab, setActivePromptTab] = useState<"nfe_import" | "barber_booking">("nfe_import");
+  const [billingPrompt, setBillingPrompt] = useState("");
+  const [restaurantPrompt, setRestaurantPrompt] = useState("");
+  const [clinicPrompt, setClinicPrompt] = useState("");
+  const [activePromptTab, setActivePromptTab] = useState<Exclude<ServiceType, null>>("nfe_import");
   const [companyPrompt, setCompanyPrompt] = useState("");
   const [operationalSettings, setOperationalSettings] = useState<OperationalSettings | null>(null);
   const [savingOperationalSettings, setSavingOperationalSettings] = useState(false);
@@ -343,11 +346,14 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
     setLoading(true);
 
     try {
-      const [companiesData, sessionData, nfePromptData, barberPromptData, operationalSettingsData] = await Promise.all([
+      const [companiesData, sessionData, nfePromptData, barberPromptData, billingPromptData, restaurantPromptData, clinicPromptData, operationalSettingsData] = await Promise.all([
         api.getCompanies(token),
         api.getWhatsappSession(token),
         api.getGlobalPrompt(token, "nfe_import").catch(() => ({ promptText: "" })),
         api.getGlobalPrompt(token, "barber_booking").catch(() => ({ promptText: "" })),
+        api.getGlobalPrompt(token, "billing").catch(() => ({ promptText: "" })),
+        api.getGlobalPrompt(token, "restaurant_delivery").catch(() => ({ promptText: "" })),
+        api.getGlobalPrompt(token, "clinic_booking").catch(() => ({ promptText: "" })),
         api.getOperationalSettings(token).catch(() => null),
       ]);
 
@@ -355,6 +361,9 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
       setWaStatus(normalizeStatus(sessionData.session.status));
       setNfePrompt(nfePromptData.promptText || "");
       setBarberPrompt(barberPromptData.promptText || "");
+      setBillingPrompt(billingPromptData.promptText || "");
+      setRestaurantPrompt(restaurantPromptData.promptText || "");
+      setClinicPrompt(clinicPromptData.promptText || "");
       setOperationalSettings(operationalSettingsData);
 
       const selectedStillExists = companiesData.some((company) => company.id === selectedCompanyId);
@@ -533,15 +542,43 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
     }
   }
 
+  const PROMPT_TAB_LABELS: Record<Exclude<ServiceType, null>, string> = {
+    nfe_import: "NF-e",
+    barber_booking: "Agendamento",
+    billing: "Cobranca",
+    restaurant_delivery: "Restaurante",
+    clinic_booking: "Clinica",
+  };
+
+  function getPromptForTab(tab: Exclude<ServiceType, null>): string {
+    switch (tab) {
+      case "nfe_import": return nfePrompt;
+      case "barber_booking": return barberPrompt;
+      case "billing": return billingPrompt;
+      case "restaurant_delivery": return restaurantPrompt;
+      case "clinic_booking": return clinicPrompt;
+    }
+  }
+
+  function setPromptForTab(tab: Exclude<ServiceType, null>, value: string) {
+    switch (tab) {
+      case "nfe_import": setNfePrompt(value); break;
+      case "barber_booking": setBarberPrompt(value); break;
+      case "billing": setBillingPrompt(value); break;
+      case "restaurant_delivery": setRestaurantPrompt(value); break;
+      case "clinic_booking": setClinicPrompt(value); break;
+    }
+  }
+
   async function handleSaveGlobalPrompt(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFeedback("");
 
-    const promptText = activePromptTab === "nfe_import" ? nfePrompt : barberPrompt;
+    const promptText = getPromptForTab(activePromptTab);
 
     try {
       await api.setGlobalPrompt(token, promptText, activePromptTab);
-      setFeedback(`Prompt global de ${activePromptTab === "nfe_import" ? "NF-e" : "Barbearia"} salvo.`);
+      setFeedback(`Prompt global de ${PROMPT_TAB_LABELS[activePromptTab]} salvo.`);
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : "Falha ao salvar prompt global");
     }
@@ -686,7 +723,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
           </div>
         </div>
 
-        <div className="rounded-xl border border-border bg-muted/50 px-4 py-3">
+        <div className="rounded-xl border border-border/50 bg-muted/30 px-4 py-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Agenda de sincronizacao</p>
           <p className="mt-1 text-sm font-semibold">O sync de NF-e roda apenas as 18:00, todos os dias.</p>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -696,7 +733,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
         </div>
 
         {loadingMonitoring ? (
-          <div className="flex items-center gap-3 rounded-2xl border border-border bg-muted/50 p-6">
+          <div className="flex items-center gap-3 rounded-2xl border border-border/50 bg-muted/30 p-6">
             <RefreshCw className="h-5 w-5 animate-spin text-green-400" />
             <span className="text-sm font-semibold text-muted-foreground">Atualizando dados operacionais...</span>
           </div>
@@ -737,7 +774,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                 const certTone = getCertificateTone(company.certificate.status);
                 const liveWaitSeconds = getLiveWaitSeconds(company.sync.waitSeconds, monitoring?.generatedAt, monitoringTick);
                 return (
-                  <div key={company.companyId} className="rounded-xl border border-border bg-muted/50 px-3 py-2.5">
+                  <div key={company.companyId} className="rounded-xl border border-border/50 bg-muted/30 px-3 py-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <p className="font-semibold">{company.name}</p>
@@ -788,7 +825,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
               {(monitoring?.recentJobs ?? []).length === 0 ? <p className="text-sm text-muted-foreground">Nenhum job encontrado.</p> : null}
 
               {(monitoring?.recentJobs ?? []).map((job) => (
-                <div key={job.id} className="rounded-xl border border-border bg-muted/50 px-3 py-2">
+                <div key={job.id} className="rounded-xl border border-border/50 bg-muted/30 px-3 py-2">
                   <div className="flex items-center justify-between gap-2">
                     <Badge variant={job.status === "success" ? "default" : job.status === "running" ? "secondary" : "destructive"}>
                       {job.status}
@@ -807,7 +844,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                 </div>
               ))}
 
-              <div className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-3 py-2">
+              <div className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/30 px-3 py-2">
                 <p className="text-xs text-muted-foreground">
                   Pagina {monitoring?.jobsPagination.page ?? jobsPage} de {monitoring?.jobsPagination.totalPages ?? 1} | Total:{" "}
                   {monitoring?.jobsPagination.total ?? 0}
@@ -915,50 +952,37 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
               <CardDescription>Configure o comportamento da IA por categoria de servico e personalize por empresa.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
-              <div className="flex gap-1 rounded-lg bg-muted p-1">
-                <button
-                  type="button"
-                  className={cn(
-                    "flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition-all",
-                    activePromptTab === "nfe_import"
-                      ? "bg-green-500/20 text-green-400 shadow-sm"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                  onClick={() => setActivePromptTab("nfe_import")}
-                >
-                  NF-e (Importacao)
-                </button>
-                <button
-                  type="button"
-                  className={cn(
-                    "flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition-all",
-                    activePromptTab === "barber_booking"
-                      ? "bg-green-500/20 text-green-400 shadow-sm"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                  onClick={() => setActivePromptTab("barber_booking")}
-                >
-                  Motor Agendamento (IA)
-                </button>
+              <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-1">
+                {(Object.entries(PROMPT_TAB_LABELS) as [Exclude<ServiceType, null>, string][]).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={cn(
+                      "rounded-md px-3 py-1.5 text-xs font-semibold transition-all",
+                      activePromptTab === key
+                        ? "bg-green-500/20 text-green-400 shadow-soft"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                    onClick={() => setActivePromptTab(key)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
 
               <form onSubmit={handleSaveGlobalPrompt} className="space-y-2">
                 <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Prompt global — {activePromptTab === "nfe_import" ? "NF-e" : "Agendamento"}
+                  Prompt global — {PROMPT_TAB_LABELS[activePromptTab]}
                 </label>
                 <textarea
                   className="min-h-[130px] w-full rounded-xl border border-input bg-background/50 px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
-                  value={activePromptTab === "nfe_import" ? nfePrompt : barberPrompt}
-                  onChange={(event) =>
-                    activePromptTab === "nfe_import"
-                      ? setNfePrompt(event.target.value)
-                      : setBarberPrompt(event.target.value)
-                  }
+                  value={getPromptForTab(activePromptTab)}
+                  onChange={(event) => setPromptForTab(activePromptTab, event.target.value)}
                   required
                 />
                 <FeedbackButton type="submit" size="sm">
                   <Save className="mr-1.5 h-4 w-4" />
-                  Salvar {activePromptTab === "nfe_import" ? "NF-e" : "Agendamento"}
+                  Salvar {PROMPT_TAB_LABELS[activePromptTab]}
                 </FeedbackButton>
               </form>
 
@@ -1153,54 +1177,100 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
           <Card>
             <CardHeader>
               <CardTitle>Nova empresa</CardTitle>
-              <CardDescription>Crie contas prontas para operacao imediata.</CardDescription>
+              <CardDescription>Selecione um template para criar rapidamente.</CardDescription>
             </CardHeader>
             <CardContent>
+              {/* ── Template Quick Select ── */}
+              <div className="mb-4 space-y-2">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">Template</p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[
+                    { slug: "", label: "Manual", icon: "⚙️" },
+                    { slug: "lava_jato", label: "Lava Jato", icon: "🚗" },
+                    { slug: "barbearia", label: "Barbearia", icon: "✂️" },
+                    { slug: "clinica_estetica", label: "Clínica", icon: "🏥" },
+                    { slug: "pet_shop", label: "Pet Shop", icon: "🐾" },
+                    { slug: "oficina_mecanica", label: "Oficina", icon: "🔧" },
+                    { slug: "cobranca", label: "Cobranças", icon: "💰" },
+                    { slug: "nfe_import", label: "NF-e Import", icon: "📄" },
+                  ].map((tpl) => (
+                    <button
+                      key={tpl.slug}
+                      type="button"
+                      onClick={() => {
+                        if (tpl.slug === "lava_jato") {
+                          setCreateForm((prev) => ({ ...prev, aiType: "barber_booking", bookingSector: "car_wash" as any }));
+                        } else if (tpl.slug === "barbearia") {
+                          setCreateForm((prev) => ({ ...prev, aiType: "barber_booking", bookingSector: "barber" as any }));
+                        } else if (tpl.slug === "clinica_estetica") {
+                          setCreateForm((prev) => ({ ...prev, aiType: "barber_booking", bookingSector: "clinic" as any }));
+                        } else if (tpl.slug === "pet_shop" || tpl.slug === "oficina_mecanica") {
+                          setCreateForm((prev) => ({ ...prev, aiType: "barber_booking", bookingSector: "generic" as any }));
+                        } else if (tpl.slug === "cobranca") {
+                          setCreateForm((prev) => ({ ...prev, aiType: "billing" }));
+                        } else {
+                          setCreateForm((prev) => ({ ...prev, aiType: "nfe_import" }));
+                        }
+                      }}
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all duration-200",
+                        (tpl.slug === "" && createForm.aiType === "nfe_import") ||
+                        (tpl.slug === "lava_jato" && createForm.bookingSector === "car_wash" && createForm.aiType === "barber_booking") ||
+                        (tpl.slug === "barbearia" && createForm.bookingSector === "barber" && createForm.aiType === "barber_booking") ||
+                        (tpl.slug === "clinica_estetica" && createForm.bookingSector === "clinic" && createForm.aiType === "barber_booking") ||
+                        (tpl.slug === "cobranca" && createForm.aiType === "billing")
+                          ? "border-primary/40 bg-primary/10 text-primary"
+                          : "border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40",
+                      )}
+                    >
+                      <span>{tpl.icon}</span>
+                      <span>{tpl.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="h-px bg-border/40 mb-4" />
+
               <form onSubmit={handleCreateCompany} className="space-y-3">
-                <Input placeholder="CNPJ ou CPF" value={createForm.cnpj} onChange={(e) => setCreateForm((prev) => ({ ...prev, cnpj: e.target.value }))} required />
-                <Input placeholder="Nome da empresa" value={createForm.name} onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))} required />
-                <Input placeholder="Email da empresa" type="email" value={createForm.email} onChange={(e) => setCreateForm((prev) => ({ ...prev, email: e.target.value }))} required />
-                <Input placeholder="Senha inicial" type="password" minLength={8} value={createForm.password} onChange={(e) => setCreateForm((prev) => ({ ...prev, password: e.target.value }))} required />
-                <select
-                  className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
-                  value={createForm.aiType}
-                  onChange={(e) => setCreateForm((prev) => ({ ...prev, aiType: e.target.value as Exclude<ServiceType, null> }))}
-                >
-                  <option value="nfe_import">NF-e (Importacao)</option>
-                  <option value="barber_booking">Motor de Agendamentos (IA)</option>
-                  <option value="billing">Cobranças e CRM</option>
-                </select>
+                <div className="form-group">
+                  <label className="form-label">Documento</label>
+                  <Input placeholder="CNPJ ou CPF" value={createForm.cnpj} onChange={(e) => setCreateForm((prev) => ({ ...prev, cnpj: e.target.value }))} required />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Nome da empresa</label>
+                  <Input placeholder="Ex: Lava Jato Premium" value={createForm.name} onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))} required />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="form-group">
+                    <label className="form-label">Email</label>
+                    <Input placeholder="email@empresa.com" type="email" value={createForm.email} onChange={(e) => setCreateForm((prev) => ({ ...prev, email: e.target.value }))} required />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Senha</label>
+                    <Input placeholder="Min 8 chars" type="password" minLength={8} value={createForm.password} onChange={(e) => setCreateForm((prev) => ({ ...prev, password: e.target.value }))} required />
+                  </div>
+                </div>
                 {createForm.aiType === "barber_booking" || createForm.aiType === "billing" ? (
-                  <>
-                    {createForm.aiType === "barber_booking" ? (
-                      <select
-                        className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
-                        value={createForm.bookingSector}
-                        onChange={(e) => setCreateForm((prev) => ({ ...prev, bookingSector: e.target.value as any }))}
-                      >
-                        <option value="barber">Barbearias e Salões de Beleza</option>
-                        <option value="car_wash">Lava Jato e Estética Automotiva</option>
-                        <option value="clinic">Clínicas e Consultórios</option>
-                        <option value="generic">Agendamento Genérico</option>
-                      </select>
-                    ) : null}
+                  <div className="form-group">
+                    <label className="form-label">Instância Evolution</label>
                     <Input
                       placeholder={
                         createForm.aiType === "billing"
-                          ? "Nome da instancia Evolution (ex: cobranca_matriz)"
-                          : "Nome da instancia Evolution (ex: agendamento_matriz)"
+                          ? "Ex: cobranca_matriz"
+                          : "Ex: agendamento_matriz"
                       }
                       value={createForm.evolutionInstanceName}
                       onChange={(e) => setCreateForm((prev) => ({ ...prev, evolutionInstanceName: e.target.value }))}
                       required
                     />
-                  </>
+                  </div>
                 ) : null}
-                <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <input type="checkbox" checked={createForm.active} onChange={(e) => setCreateForm((prev) => ({ ...prev, active: e.target.checked }))} />
+                <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                  <input type="checkbox" className="rounded border-input" checked={createForm.active} onChange={(e) => setCreateForm((prev) => ({ ...prev, active: e.target.checked }))} />
                   Conta ativa
                 </label>
-                <Button type="submit" className="w-full">
+                <Button type="submit" className="w-full" variant="default">
                   <Plus className="mr-1.5 h-4 w-4" />
                   Criar empresa
                 </Button>
@@ -1239,7 +1309,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                   onClick={() => setSelectedCompanyId(company.id)}
                   className={cn(
                     "w-full rounded-xl border px-3 py-2 text-left transition",
-                    selectedCompanyId === company.id ? "border-green-500/30 bg-green-500/10" : "border-border bg-muted/50 hover:bg-muted/50",
+                    selectedCompanyId === company.id ? "border-green-500/30 bg-green-500/10" : "border-border/50 bg-muted/30 hover:bg-muted/50",
                   )}
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -1346,7 +1416,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                           const isDeleting = deletingNumberId === number.id;
 
                           return (
-                            <div key={number.id} className="rounded-xl border border-border bg-muted/50 p-2.5">
+                            <div key={number.id} className="rounded-xl border border-border/50 bg-muted/30 p-2.5">
                               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                                 <Input
                                   value={draft.phone}
@@ -1395,7 +1465,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                       </div>
                     </>
                   ) : (
-                    <div className="rounded-xl border border-border bg-muted/50 p-3">
+                    <div className="rounded-xl border border-border/50 bg-muted/30 p-3">
                       <p className="text-sm font-semibold">
                         {editForm.aiType === "billing" ? "Regra de atendimento da cobranca" : "Regra de atendimento do agendamento"}
                       </p>
@@ -1438,7 +1508,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
           <CardContent className="space-y-2.5">
             {companies.length === 0 ? <p className="text-sm text-muted-foreground">Ainda nao existem empresas cadastradas.</p> : null}
             {companies.slice(0, 6).map((company) => (
-              <div key={company.id} className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-3 py-2">
+              <div key={company.id} className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/30 px-3 py-2">
                 <div>
                   <p className="font-semibold">{company.name}</p>
                   <p className="text-xs text-muted-foreground">{company.email}</p>
@@ -1465,7 +1535,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
             <CardDescription>Controle rapido da sessao usada no atendimento automatizado.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="rounded-xl border border-border bg-muted/50 p-3">
+            <div className="rounded-xl border border-border/50 bg-muted/30 p-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status atual</p>
               <div className="mt-2 flex items-center gap-2">
                 <Badge variant={statusTone.badge}>{statusTone.text}</Badge>
@@ -1513,7 +1583,7 @@ function StatCard({
   const valueIsNumeric = typeof value === "number";
 
   return (
-    <Card className="h-full min-h-[108px] border-border bg-card transition-all hover:border-primary/20 hover:bg-muted/50">
+    <Card className="h-full min-h-[108px] border-border/50 bg-card transition-all hover:border-primary/20 hover:bg-muted/50">
       <CardContent className="grid h-full grid-cols-[auto_minmax(0,1fr)] items-center gap-4 p-4 sm:p-5">
         <div className="grid h-12 w-12 place-items-center rounded-xl bg-green-500/10 text-green-400 ring-1 ring-inset ring-green-500/20">
           <Icon className="h-6 w-6" />

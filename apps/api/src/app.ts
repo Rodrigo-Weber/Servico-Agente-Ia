@@ -14,6 +14,7 @@ import { companyRoutes } from "./modules/company/routes.js";
 import { barberRoutes } from "./modules/barber/routes.js";
 import { billingRoutes } from "./modules/billing/routes.js";
 import { webhooksRoutes } from "./modules/webhooks/routes.js";
+import { nfseRoutes } from "./modules/nfse/routes.js";
 import { prisma } from "./lib/prisma.js";
 import { disconnectRedisClients } from "./lib/redis.js";
 
@@ -50,6 +51,7 @@ export async function buildApp() {
   await barberRoutes(app);
   await billingRoutes(app);
   await webhooksRoutes(app);
+  await app.register(nfseRoutes, { prefix: "/nfse" });
 
   if (env.SERVE_WEB_STATIC) {
     const currentDir = path.dirname(fileURLToPath(import.meta.url));

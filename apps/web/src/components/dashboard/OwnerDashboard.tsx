@@ -44,16 +44,16 @@ interface KpiCardProps {
 
 function KpiCard({ icon: Icon, label, value, detail, accent = "bg-muted" }: KpiCardProps) {
     return (
-        <div className="flex flex-col rounded-xl border border-border bg-card p-5 shadow-sm gap-4 transition-colors duration-300">
+        <div className="stat-card group relative overflow-hidden rounded-xl border border-border/60 bg-card p-5 shadow-soft transition-all duration-300 hover:shadow-soft-lg hover:-translate-y-0.5">
             <div className="flex items-center gap-3">
-                <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${accent} text-foreground`}>
-                    <Icon className="h-5 w-5" />
+                <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${accent} transition-transform group-hover:scale-110 duration-300`}>
+                    <Icon className="h-4 w-4" />
                 </div>
-                <p className="text-sm font-semibold text-muted-foreground">{label}</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/70">{label}</p>
             </div>
-            <div>
+            <div className="mt-3">
                 <p className="font-display text-2xl font-bold tracking-tight text-foreground">{value}</p>
-                {detail && <p className="mt-1 text-xs text-muted-foreground">{detail}</p>}
+                {detail && <p className="mt-0.5 text-[11px] text-muted-foreground">{detail}</p>}
             </div>
         </div>
     );
@@ -94,11 +94,11 @@ export function OwnerDashboard({ session, token }: OwnerDashboardProps) {
     return (
         <div className="space-y-8 enter-up">
             {/* Welcome header */}
-            <div className="rounded-xl bg-card border border-border p-6 shadow-sm">
-                <h2 className="font-display text-2xl font-bold text-foreground">
-                    Visão Geral da Operação 🚀
+            <div className="rounded-xl border border-border/40 bg-gradient-to-r from-primary/5 via-transparent to-primary/5 p-6 shadow-soft">
+                <h2 className="font-display text-xl font-bold text-foreground sm:text-2xl">
+                    Visão Geral da Operação
                 </h2>
-                <p className="mt-1 text-sm text-muted-foreground">
+                <p className="mt-1 text-sm text-muted-foreground/80">
                     Resumo de {new Date(summary.generatedAt).toLocaleString("pt-BR", {
                         dateStyle: "full",
                         timeStyle: "short",
@@ -170,8 +170,8 @@ export function OwnerDashboard({ session, token }: OwnerDashboardProps) {
             {/* Charts Row */}
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
                 {/* Messages over time */}
-                <div className="rounded-xl border border-border bg-card p-6 shadow-sm transition-colors duration-300">
-                    <h3 className="mb-4 font-semibold text-foreground">Mensagens por Dia (7 dias)</h3>
+                <div className="rounded-xl border border-border/50 bg-card p-6 shadow-soft transition-all duration-300 hover:shadow-soft-lg">
+                    <h3 className="mb-4 text-sm font-semibold text-foreground">Mensagens por Dia (7 dias)</h3>
                     <ResponsiveContainer width="100%" height={220}>
                         <AreaChart data={summary.messagesPerDay}>
                             <defs>
@@ -217,8 +217,8 @@ export function OwnerDashboard({ session, token }: OwnerDashboardProps) {
                 </div>
 
                 {/* Performance by service or billing */}
-                <div className="rounded-xl border border-border bg-card p-6 shadow-sm transition-colors duration-300">
-                    <h3 className="mb-4 font-semibold text-foreground">
+                <div className="rounded-xl border border-border/50 bg-card p-6 shadow-soft transition-all duration-300 hover:shadow-soft-lg">
+                    <h3 className="mb-4 text-sm font-semibold text-foreground">
                         {serviceType === "billing" ? "Cobranças por Status (Mês)" : "Agendamentos por Dia (7 dias)"}
                     </h3>
                     <ResponsiveContainer width="100%" height={220}>
@@ -253,8 +253,8 @@ export function OwnerDashboard({ session, token }: OwnerDashboardProps) {
             </div>
 
             {/* Recent Activity / Alerts */}
-            <div className="rounded-xl border border-border bg-card p-6 shadow-sm transition-colors duration-300">
-                <h3 className="mb-4 font-semibold text-foreground">Alertas e Atividade Recente</h3>
+            <div className="rounded-xl border border-border/50 bg-card p-6 shadow-soft transition-all duration-300">
+                <h3 className="mb-4 text-sm font-semibold text-foreground">Alertas e Atividade Recente</h3>
                 <div className="space-y-2">
                     {summary.recentAlerts.length === 0 ? (
                         <p className="text-sm text-muted-foreground">Nenhum alerta no momento. Tudo operando normalmente! ✅</p>
