@@ -9,6 +9,7 @@ import { nfseService } from "../../services/nfse.service.js";
 import { authenticate, requireRoles } from "../auth/guards.js";
 import { evolutionService } from "../../services/evolution.service.js";
 import { getAvailableTemplates } from "../../config/company-templates.js";
+import { MUNICIPIOS_BA_PRINCIPAIS, searchMunicipios } from "../../config/municipios-ba.js";
 
 export async function nfseRoutes(app: FastifyInstance) {
   app.addHook("onRequest", authenticate);
@@ -29,6 +30,16 @@ export async function nfseRoutes(app: FastifyInstance) {
     }));
   });
 
+  /* ─── Municípios BA (para select de município na config) ─── */
+  app.get("/municipios-ba", async (request, reply) => {
+    await requireRoles(["admin", "company"])(request, reply);
+    const query = request.query as { q?: string };
+    if (query.q && query.q.length >= 2) {
+      return searchMunicipios(query.q);
+    }
+    return MUNICIPIOS_BA_PRINCIPAIS;
+  });
+
   /* ─── Config NFS-e ─── */
 
   app.get("/config", async (request, reply) => {
@@ -43,17 +54,16 @@ export async function nfseRoutes(app: FastifyInstance) {
     }
 
     const config = await nfseService.getConfig(companyId);
+    const certStatus = await nfseService.getCertificateStatus(companyId);
+
     if (!config) {
-      return { configured: false, config: null };
+      return { configured: false, config: null, certificado: certStatus };
     }
 
-    // Não expõe o token completo
     return {
       configured: true,
-      config: {
-        ...config,
-        apiToken: config.apiToken ? `****${config.apiToken.slice(-4)}` : null,
-      },
+      config,
+      certificado: certStatus,
     };
   });
 
@@ -63,8 +73,6 @@ export async function nfseRoutes(app: FastifyInstance) {
 
     const schema = z.object({
       companyId: z.string().optional(),
-      provider: z.string().optional(),
-      apiToken: z.string().optional(),
       environment: z.enum(["producao", "homologacao"]).optional(),
       inscricaoMunicipal: z.string().optional(),
       codigoMunicipio: z.string().optional(),
@@ -77,6 +85,8 @@ export async function nfseRoutes(app: FastifyInstance) {
       descricaoPadrao: z.string().optional(),
       autoEmitir: z.boolean().optional(),
       enviarWhatsapp: z.boolean().optional(),
+      sefazEndpoint: z.string().url().optional(),
+      serieRps: z.string().optional(),
     });
 
     const body = schema.parse(request.body);
@@ -85,18 +95,11 @@ export async function nfseRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "companyId é obrigatório" });
     }
 
-    // Não sobrescreve apiToken com máscara
     const data: any = { ...body };
     delete data.companyId;
-    if (data.apiToken?.startsWith("****")) {
-      delete data.apiToken;
-    }
 
     const config = await nfseService.upsertConfig(companyId, data);
-    return {
-      ...config,
-      apiToken: config.apiToken ? `****${config.apiToken.slice(-4)}` : null,
-    };
+    return config;
   });
 
   /* ─── Emissão ─── */

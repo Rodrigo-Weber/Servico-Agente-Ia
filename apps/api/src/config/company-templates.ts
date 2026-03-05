@@ -76,8 +76,9 @@ Sempre confirme data, horário e tipo de serviço antes de agendar.
 Quando o cliente perguntar sobre preços, liste todos os serviços disponíveis.`,
     nfseDefaults: {
       itemListaServico: "14.01",
+      codigoTributarioMunicipio: "1401",
       aliquotaIss: 0.05,
-      descricaoPadrao: "Serviço de lavagem e conservação de veículos automotores",
+      descricaoPadrao: "Serviço de lavagem e conservação de veículos automotores - {servico} realizado em {data} para {cliente}",
     },
   },
   {

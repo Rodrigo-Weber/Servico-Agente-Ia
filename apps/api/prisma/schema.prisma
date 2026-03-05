@@ -536,13 +536,13 @@ model RefreshToken {
   @@index([userId, expiresAt])
 }
 
-// ───── NFS-e de Serviço (integração real via FocusNFe / eNotas) ─────
+// ───── NFS-e de Serviço (emissão direta via SEFAZ com certificado A1) ─────
 
 model NfseConfig {
   id                      String   @id @default(cuid())
   companyId               String   @unique
   company                 Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  provider                String   @default("focusnfe") // focusnfe | enotas | nfse_io
+  provider                String   @default("sefaz_direto") // sefaz_direto
   apiToken                String?  @db.Text
   environment             String   @default("homologacao") // producao | homologacao
   inscricaoMunicipal      String?
@@ -556,6 +556,9 @@ model NfseConfig {
   descricaoPadrao         String?  @db.Text // template de discriminação
   autoEmitir              Boolean  @default(false) // emitir NFS-e automaticamente ao concluir servico
   enviarWhatsapp          Boolean  @default(true)  // enviar PDF via WhatsApp ao cliente
+  sefazEndpoint           String?  @db.Text // URL do WebService NFS-e municipal (ABRASF)
+  ultimoNumeroRps         Int      @default(0) // Último número de RPS emitido (auto-increment)
+  serieRps                String   @default("RPS") // Série do RPS
   active                  Boolean  @default(true)
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
@@ -566,7 +569,7 @@ model NfseServiceDocument {
   companyId         String
   company           Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
   appointmentId     String?
-  providerRef       String?     // ID da NFS-e no provedor (FocusNFe ref)
+  providerRef       String?     // Referência do RPS (ex: RPS-123)
   providerProtocol  String?     // Protocolo de autorização
   numero            String?     // Número da NFS-e quando autorizada
   codigoVerificacao String?     // Código de verificação

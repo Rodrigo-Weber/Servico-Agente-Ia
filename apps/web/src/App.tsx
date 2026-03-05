@@ -190,6 +190,10 @@ export default function App() {
           title: "Agendamentos",
           subtitle: "Controle atendimentos e status em tempo real",
         },
+        nfse: {
+          title: "NFS-e",
+          subtitle: "Emissao e gestao de Notas Fiscais de Servico Eletronica",
+        },
         settings: {
           title: "Atendimento IA",
           subtitle: "Comandos e comportamento do agente no WhatsApp",

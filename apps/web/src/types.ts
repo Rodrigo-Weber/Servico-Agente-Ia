@@ -420,39 +420,82 @@ export interface NfseConfig {
   provider: string;
   apiToken: string;
   environment: "homologacao" | "producao";
-  razaoSocial: string;
-  cnpj: string;
   inscricaoMunicipal: string;
   codigoMunicipio: string;
+  regimeTributario: number;
   itemListaServico: string;
+  codigoTributarioMunicipio: string;
   aliquotaIss: number;
   issRetido: boolean;
+  naturezaOperacao: number;
   descricaoPadrao: string;
   autoEmitir: boolean;
+  enviarWhatsapp: boolean;
+  sefazEndpoint: string;
+  serieRps: string;
+  ultimoNumeroRps: number;
+}
+
+export interface MunicipioBA {
+  codigo: string;
+  nome: string;
+  uf: string;
 }
 
 export interface NfseDocument {
   id: string;
   companyId: string;
   appointmentId: string | null;
-  ref: string;
+  providerRef: string | null;
+  providerProtocol: string | null;
+  numero: string | null;
+  codigoVerificacao: string | null;
   status: NfseStatus;
   valorServicos: number;
-  descricao: string;
-  tomadorNome: string | null;
+  aliquotaIss: number | null;
+  valorIss: number | null;
+  discriminacao: string;
+  tomadorNome: string;
   tomadorDocumento: string | null;
   tomadorEmail: string | null;
   tomadorTelefone: string | null;
-  providerRef: string | null;
-  providerUrl: string | null;
   pdfUrl: string | null;
-  whatsappSentAt: string | null;
+  xmlUrl: string | null;
   errorMessage: string | null;
+  emitidaEm: string | null;
+  canceladaEm: string | null;
+  whatsappSentAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface NfseDashboard {
+  configured: boolean;
+  autoEmitir: boolean;
+  enviarWhatsapp: boolean;
+  totals: {
+    authorized: number;
+    processing: number;
+    pending: number;
+    rejected: number;
+    error: number;
+    canceled: number;
+  };
+  month: {
+    count: number;
+    total: number;
+  };
+  recentDocs: Array<{
+    id: string;
+    numero: string | null;
+    status: NfseStatus;
+    valorServicos: number;
+    tomadorNome: string;
+    discriminacao: string;
+    createdAt: string;
+    emitidaEm: string | null;
+  }>;
+  // Compat fields
   total: number;
   authorized: number;
   pending: number;

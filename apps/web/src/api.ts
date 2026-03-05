@@ -20,6 +20,7 @@ import {
   NfseDocument,
   NfseDashboard,
   CompanyTemplate,
+  MunicipioBA,
 } from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? "http://localhost:3333" : "");
@@ -917,7 +918,7 @@ export const api = {
   // ─── NFS-e ────────────────────────────────────────────────────────────
 
   getNfseConfig(token: string) {
-    return request<NfseConfig>("/nfse/config", { token });
+    return request<{ configured: boolean; config: NfseConfig | null; certificado: { hasCertificate: boolean; validTo: string | null; daysRemaining: number | null; status: string } }>("/nfse/config", { token });
   },
 
   updateNfseConfig(token: string, payload: Partial<NfseConfig>) {
@@ -930,6 +931,11 @@ export const api = {
 
   getNfseTemplates(token: string) {
     return request<CompanyTemplate[]>("/nfse/templates", { token });
+  },
+
+  getMunicipiosBA(token: string, query?: string) {
+    const q = query ? `?q=${encodeURIComponent(query)}` : "";
+    return request<MunicipioBA[]>(`/nfse/municipios-ba${q}`, { token });
   },
 
   emitirNfse(
@@ -946,7 +952,16 @@ export const api = {
     return request<NfseDocument>("/nfse/emitir", {
       method: "POST",
       token,
-      body: payload,
+      body: {
+        valorServicos: payload.valorServicos,
+        discriminacao: payload.descricao,
+        tomador: {
+          nome: payload.tomadorNome || "Consumidor Final",
+          cpfCnpj: payload.tomadorDocumento || null,
+          email: payload.tomadorEmail || null,
+          telefone: payload.tomadorTelefone || null,
+        },
+      },
     });
   },
 
@@ -962,8 +977,8 @@ export const api = {
   },
 
   listNfse(token: string, page = 1, limit = 20) {
-    return request<{ data: NfseDocument[]; total: number; page: number; limit: number }>(
-      `/nfse/?page=${page}&limit=${limit}`,
+    return request<{ data?: NfseDocument[]; items?: NfseDocument[]; total: number; page: number }>(
+      `/nfse/?page=${page}&pageSize=${limit}`,
       { token },
     );
   },
@@ -983,6 +998,7 @@ export const api = {
     return request<NfseDocument>(`/nfse/cancelar/${nfseId}`, {
       method: "POST",
       token,
+      body: { justificativa: "Cancelamento solicitado pelo usuario via painel web" },
     });
   },
 
