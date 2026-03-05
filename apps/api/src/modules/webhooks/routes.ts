@@ -351,26 +351,26 @@ function extractIncomingPayload(body: unknown): IncomingData {
 
   const fileNameRaw = String(
     documentMessage?.fileName ??
-      firstMessage?.fileName ??
-      source.fileName ??
-      data.fileName ??
-      root.fileName ??
-      source.file ??
-      data.file ??
-      root.file ??
-      "",
+    firstMessage?.fileName ??
+    source.fileName ??
+    data.fileName ??
+    root.fileName ??
+    source.file ??
+    data.file ??
+    root.file ??
+    "",
   );
   const fileName = fileNameRaw.toLowerCase();
   const mimeTypeRaw = String(
     documentMessage?.mimetype ??
-      firstMessage?.mimetype ??
-      source.mimetype ??
-      data.mimetype ??
-      root.mimetype ??
-      source.mimeType ??
-      data.mimeType ??
-      root.mimeType ??
-      "",
+    firstMessage?.mimetype ??
+    source.mimetype ??
+    data.mimetype ??
+    root.mimetype ??
+    source.mimeType ??
+    data.mimeType ??
+    root.mimeType ??
+    "",
   );
   const mimeType = mimeTypeRaw.toLowerCase();
 
@@ -678,32 +678,32 @@ function parseConversationContext(raw: unknown): ConversationContextPayload {
 
   const triagePendingBookRaw =
     triageRaw?.pendingBookConfirm &&
-    typeof triageRaw.pendingBookConfirm === "object" &&
-    !Array.isArray(triageRaw.pendingBookConfirm)
+      typeof triageRaw.pendingBookConfirm === "object" &&
+      !Array.isArray(triageRaw.pendingBookConfirm)
       ? (triageRaw.pendingBookConfirm as Record<string, unknown>)
       : null;
 
   const triage =
     triageRaw
       ? {
-          clientName: typeof triageRaw.clientName === "string" ? triageRaw.clientName : null,
-          clientDocument: typeof triageRaw.clientDocument === "string" ? triageRaw.clientDocument : null,
-          serviceId: typeof triageRaw.serviceId === "string" ? triageRaw.serviceId : null,
-          startsAtIso: typeof triageRaw.startsAtIso === "string" ? triageRaw.startsAtIso : null,
-          updatedAtIso: typeof triageRaw.updatedAtIso === "string" ? triageRaw.updatedAtIso : new Date(0).toISOString(),
-          pendingCancelId: typeof triageRaw.pendingCancelId === "string" ? triageRaw.pendingCancelId : null,
-          pendingBookConfirm:
-            triagePendingBookRaw &&
+        clientName: typeof triageRaw.clientName === "string" ? triageRaw.clientName : null,
+        clientDocument: typeof triageRaw.clientDocument === "string" ? triageRaw.clientDocument : null,
+        serviceId: typeof triageRaw.serviceId === "string" ? triageRaw.serviceId : null,
+        startsAtIso: typeof triageRaw.startsAtIso === "string" ? triageRaw.startsAtIso : null,
+        updatedAtIso: typeof triageRaw.updatedAtIso === "string" ? triageRaw.updatedAtIso : new Date(0).toISOString(),
+        pendingCancelId: typeof triageRaw.pendingCancelId === "string" ? triageRaw.pendingCancelId : null,
+        pendingBookConfirm:
+          triagePendingBookRaw &&
             typeof triagePendingBookRaw.barberId === "string" &&
             typeof triagePendingBookRaw.serviceId === "string" &&
             typeof triagePendingBookRaw.startsAtIso === "string"
-              ? {
-                  barberId: triagePendingBookRaw.barberId,
-                  serviceId: triagePendingBookRaw.serviceId,
-                  startsAtIso: triagePendingBookRaw.startsAtIso,
-                }
-              : null,
-        }
+            ? {
+              barberId: triagePendingBookRaw.barberId,
+              serviceId: triagePendingBookRaw.serviceId,
+              startsAtIso: triagePendingBookRaw.startsAtIso,
+            }
+            : null,
+      }
       : undefined;
 
   const nfeRaw =
@@ -712,66 +712,66 @@ function parseConversationContext(raw: unknown): ConversationContextPayload {
       : undefined;
   const listedNotes = Array.isArray(nfeRaw?.listedNotes)
     ? nfeRaw.listedNotes
-        .map((item) => {
-          if (!item || typeof item !== "object" || Array.isArray(item)) {
-            return null;
-          }
+      .map((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+          return null;
+        }
 
-          const note = item as Record<string, unknown>;
-          const status = note.status;
-          if (status !== "detected" && status !== "imported" && status !== "failed") {
-            return null;
-          }
+        const note = item as Record<string, unknown>;
+        const status = note.status;
+        if (status !== "detected" && status !== "imported" && status !== "failed") {
+          return null;
+        }
 
-          if (typeof note.chave !== "string" || note.chave.trim().length === 0) {
-            return null;
-          }
+        if (typeof note.chave !== "string" || note.chave.trim().length === 0) {
+          return null;
+        }
 
-          const value = Number(note.valor);
-          if (!Number.isFinite(value)) {
-            return null;
-          }
+        const value = Number(note.valor);
+        if (!Number.isFinite(value)) {
+          return null;
+        }
 
-          return {
-            chave: note.chave.trim(),
-            valor: value,
-            status,
-            emitenteNome: typeof note.emitenteNome === "string" ? note.emitenteNome : null,
-            createdAtIso: typeof note.createdAtIso === "string" ? note.createdAtIso : new Date(0).toISOString(),
-          } as NfeReferenceMemory;
-        })
-        .filter((item): item is NfeReferenceMemory => item !== null)
+        return {
+          chave: note.chave.trim(),
+          valor: value,
+          status,
+          emitenteNome: typeof note.emitenteNome === "string" ? note.emitenteNome : null,
+          createdAtIso: typeof note.createdAtIso === "string" ? note.createdAtIso : new Date(0).toISOString(),
+        } as NfeReferenceMemory;
+      })
+      .filter((item): item is NfeReferenceMemory => item !== null)
     : [];
 
   const nfeState = nfeRaw
     ? {
-        listedNotes: listedNotes.slice(0, MAX_NFE_LISTED_NOTES),
-        selectedChave:
-          typeof nfeRaw.selectedChave === "string" && nfeRaw.selectedChave.trim().length > 0
-            ? nfeRaw.selectedChave.trim()
-            : null,
-        updatedAtIso: typeof nfeRaw.updatedAtIso === "string" ? nfeRaw.updatedAtIso : new Date(0).toISOString(),
-        pendingImport: nfeRaw.pendingImport === true,
-      }
+      listedNotes: listedNotes.slice(0, MAX_NFE_LISTED_NOTES),
+      selectedChave:
+        typeof nfeRaw.selectedChave === "string" && nfeRaw.selectedChave.trim().length > 0
+          ? nfeRaw.selectedChave.trim()
+          : null,
+      updatedAtIso: typeof nfeRaw.updatedAtIso === "string" ? nfeRaw.updatedAtIso : new Date(0).toISOString(),
+      pendingImport: nfeRaw.pendingImport === true,
+    }
     : undefined;
 
   const recentMessages = Array.isArray(record.recentMessages)
     ? record.recentMessages
-        .map((item) => {
-          if (!item || typeof item !== "object" || Array.isArray(item)) {
-            return null;
-          }
-          const message = item as Record<string, unknown>;
-          if ((message.role !== "user" && message.role !== "assistant") || typeof message.text !== "string") {
-            return null;
-          }
-          return {
-            role: message.role,
-            text: message.text,
-            atIso: typeof message.atIso === "string" ? message.atIso : new Date(0).toISOString(),
-          } as ConversationMessageMemory;
-        })
-        .filter((item): item is ConversationMessageMemory => item !== null)
+      .map((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+          return null;
+        }
+        const message = item as Record<string, unknown>;
+        if ((message.role !== "user" && message.role !== "assistant") || typeof message.text !== "string") {
+          return null;
+        }
+        return {
+          role: message.role,
+          text: message.text,
+          atIso: typeof message.atIso === "string" ? message.atIso : new Date(0).toISOString(),
+        } as ConversationMessageMemory;
+      })
+      .filter((item): item is ConversationMessageMemory => item !== null)
     : [];
 
   return {
@@ -927,9 +927,9 @@ async function getBarberTriageState(companyId: string, phone: string): Promise<B
     pendingBookConfirm: triage.pendingBookConfirm ?? null,
     lastIntent:
       memory?.lastIntent === "agendar" ||
-      memory?.lastIntent === "recibo" ||
-      memory?.lastIntent === "fidelidade" ||
-      memory?.lastIntent === "cancelar"
+        memory?.lastIntent === "recibo" ||
+        memory?.lastIntent === "fidelidade" ||
+        memory?.lastIntent === "cancelar"
         ? (memory.lastIntent as BarberIntent)
         : null,
   };
@@ -953,10 +953,10 @@ async function rememberConversationUserName(input: {
         ...context.barber,
         triage: triage
           ? {
-              ...triage,
-              clientName: normalizedName,
-              updatedAtIso: new Date().toISOString(),
-            }
+            ...triage,
+            clientName: normalizedName,
+            updatedAtIso: new Date().toISOString(),
+          }
           : undefined,
       },
     };
@@ -1146,6 +1146,7 @@ async function safeRememberNfeConversation(input: {
   phone: string;
   listedNotes?: NfeReferenceMemory[];
   selectedChave?: string | null;
+  pendingImport?: boolean;
 }): Promise<void> {
   try {
     await rememberNfeConversation(input);
@@ -2033,13 +2034,13 @@ async function handleNfeToolAgentConversation(input: {
               itensTotal: found.nfe.items.length,
               itens: includeItems
                 ? found.nfe.items.slice(0, MAX_NFE_PRODUCT_LINES).map((item) => ({
-                    codigo: item.codigo,
-                    descricao: item.descricao,
-                    qtd: Number(item.qtd),
-                    qtdFmt: formatDecimal(Number(item.qtd)),
-                    total: Number(item.vTotal),
-                    totalFmt: formatCurrency(Number(item.vTotal)),
-                  }))
+                  codigo: item.codigo,
+                  descricao: item.descricao,
+                  qtd: Number(item.qtd),
+                  qtdFmt: formatDecimal(Number(item.qtd)),
+                  total: Number(item.vTotal),
+                  totalFmt: formatCurrency(Number(item.vTotal)),
+                }))
                 : [],
               itensOmitidos: includeItems ? Math.max(0, found.nfe.items.length - MAX_NFE_PRODUCT_LINES) : found.nfe.items.length,
             },
@@ -2268,8 +2269,8 @@ async function buildBillingFallbackReply(input: {
       : "No momento nao encontrei documentos pendentes ou vencidos para o seu cadastro.",
     nextDocument
       ? `Proximo vencimento: ${nextDocument.description} em ${formatDateBr(nextDocument.dueDate)} (${formatCurrency(
-          Number(nextDocument.amount),
-        )}) - ${formatBillingDocumentStatus(nextDocument.status)}.`
+        Number(nextDocument.amount),
+      )}) - ${formatBillingDocumentStatus(nextDocument.status)}.`
       : "",
     "Se quiser, eu posso listar tudo por mes, por prazo (30, 15 ou 7 dias) ou detalhar um boleto especifico.",
   ]
@@ -2460,14 +2461,14 @@ async function handleBillingToolAgentConversation(input: {
             },
             proximoDocumento: nextDocument
               ? {
-                  descricao: nextDocument.description,
-                  valor: Number(nextDocument.amount),
-                  valorFmt: formatCurrency(Number(nextDocument.amount)),
-                  vencimento: nextDocument.dueDate.toISOString(),
-                  vencimentoFmt: formatDateBr(nextDocument.dueDate),
-                  status: nextDocument.status,
-                  statusFmt: formatBillingDocumentStatus(nextDocument.status),
-                }
+                descricao: nextDocument.description,
+                valor: Number(nextDocument.amount),
+                valorFmt: formatCurrency(Number(nextDocument.amount)),
+                vencimento: nextDocument.dueDate.toISOString(),
+                vencimentoFmt: formatDateBr(nextDocument.dueDate),
+                status: nextDocument.status,
+                statusFmt: formatBillingDocumentStatus(nextDocument.status),
+              }
               : null,
           });
         },
@@ -3666,13 +3667,13 @@ async function handleBarberConversation(input: {
   // Dica de contexto para o classificador de intenção
   const triageInfoHint = triageState
     ? [
-        triageState.clientName ? `nome do cliente já registrado: ${triageState.clientName}` : "",
-        triageState.serviceId ? "serviço já selecionado" : "",
-        triageState.startsAtIso ? "horário já em rascunho" : "",
-        triageState.lastIntent ? `última intenção: ${triageState.lastIntent}` : "",
-      ]
-        .filter(Boolean)
-        .join(", ")
+      triageState.clientName ? `nome do cliente já registrado: ${triageState.clientName}` : "",
+      triageState.serviceId ? "serviço já selecionado" : "",
+      triageState.startsAtIso ? "horário já em rascunho" : "",
+      triageState.lastIntent ? `última intenção: ${triageState.lastIntent}` : "",
+    ]
+      .filter(Boolean)
+      .join(", ")
     : undefined;
 
   // Classificação de intenção com IA (contexto + histórico) + fallback por palavras-chave
@@ -3701,16 +3702,16 @@ async function handleBarberConversation(input: {
     !isGreetingMessage &&
     Boolean(
       triageState &&
-        (triageState.lastIntent === "recibo" || triageState.lastIntent === "fidelidade") &&
-        hasRegistrationPayload,
+      (triageState.lastIntent === "recibo" || triageState.lastIntent === "fidelidade") &&
+      hasRegistrationPayload,
     );
   const shouldResumeScheduling =
     detectedIntent === "ajuda" &&
     !isGreetingMessage &&
     Boolean(
       triageState &&
-        triageState.lastIntent === "agendar" &&
-        (triageState.clientName || triageState.serviceId || triageState.startsAtIso),
+      triageState.lastIntent === "agendar" &&
+      (triageState.clientName || triageState.serviceId || triageState.startsAtIso),
     );
   // Retomada de recibo: usuário respondeu com data após lista de atendimentos
   const shouldResumeRecibo =
@@ -3779,7 +3780,7 @@ async function handleBarberConversation(input: {
     try {
       // Usa clientName explícito ou o nome atual conhecido
       const clientNameToUse = options?.clientName !== undefined ? options.clientName : currentClientName;
-      
+
       const natural = await aiService.generateBookingNaturalReply({
         companyId: input.companyId,
         userMessage: incomingUserMessage,
@@ -3848,7 +3849,7 @@ async function handleBarberConversation(input: {
   }
 
   const rememberedClientName = parsedCustomerName ?? triageState?.clientName ?? knownCustomer?.name ?? null;
-  
+
   // Atualiza o nome do cliente para uso na função renderReply
   currentClientName = rememberedClientName;
 
@@ -4044,12 +4045,12 @@ async function handleBarberConversation(input: {
     const appointmentWhereWithDate: Prisma.BarberAppointmentWhereInput =
       parsedDateOnly
         ? {
-            ...completedWhere,
-            startsAt: {
-              gte: new Date(parsedDateOnly.year, parsedDateOnly.month - 1, parsedDateOnly.day, 0, 0, 0),
-              lt: new Date(parsedDateOnly.year, parsedDateOnly.month - 1, parsedDateOnly.day, 23, 59, 59),
-            },
-          }
+          ...completedWhere,
+          startsAt: {
+            gte: new Date(parsedDateOnly.year, parsedDateOnly.month - 1, parsedDateOnly.day, 0, 0, 0),
+            lt: new Date(parsedDateOnly.year, parsedDateOnly.month - 1, parsedDateOnly.day, 23, 59, 59),
+          },
+        }
         : completedWhere;
 
     let appointment = await prisma.barberAppointment.findFirst({
@@ -4971,14 +4972,14 @@ async function sendAndLog(
 ): Promise<void> {
   const content = attachment
     ? buildStoredMessageContent({
-        text,
-        attachment: {
-          fileName: attachment.fileName,
-          mimeType: attachment.mimeType,
-          mediaType: attachment.mediaType,
-          base64: attachment.base64,
-        },
-      })
+      text,
+      attachment: {
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType,
+        mediaType: attachment.mediaType,
+        base64: attachment.base64,
+      },
+    })
     : text;
 
   const outLog = await prisma.messageLog.create({
@@ -5185,14 +5186,14 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
       : null;
     const inboundContent = inboundMediaPayload
       ? buildStoredMessageContent({
-          text: inboundText,
-          attachment: {
-            fileName: inboundMediaPayload.fileName,
-            mimeType: inboundMediaPayload.mimeType,
-            mediaType: inboundMediaPayload.mediaType,
-            base64: inboundMediaPayload.base64,
-          },
-        })
+        text: inboundText,
+        attachment: {
+          fileName: inboundMediaPayload.fileName,
+          mimeType: inboundMediaPayload.mimeType,
+          mediaType: inboundMediaPayload.mediaType,
+          base64: inboundMediaPayload.base64,
+        },
+      })
       : inboundText;
 
     const inLog = await prisma.messageLog.create({

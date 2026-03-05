@@ -15,7 +15,7 @@ export async function nfseRoutes(app: FastifyInstance) {
 
   /* ─── Templates (público para admin/company) ─── */
   app.get("/templates", async (request, reply) => {
-    await requireRoles(request, ["admin", "company"]);
+    await requireRoles(["admin", "company"])(request, reply);
     const templates = getAvailableTemplates();
     return templates.map((t) => ({
       slug: t.slug,
@@ -32,8 +32,8 @@ export async function nfseRoutes(app: FastifyInstance) {
   /* ─── Config NFS-e ─── */
 
   app.get("/config", async (request, reply) => {
-    await requireRoles(request, ["admin", "company"]);
-    const user = request.user!;
+    await requireRoles(["admin", "company"])(request, reply);
+    const user = request.authUser!;
     const companyId = user.role === "admin"
       ? (request.query as any).companyId
       : user.companyId;
@@ -58,8 +58,8 @@ export async function nfseRoutes(app: FastifyInstance) {
   });
 
   app.put("/config", async (request, reply) => {
-    await requireRoles(request, ["admin", "company"]);
-    const user = request.user!;
+    await requireRoles(["admin", "company"])(request, reply);
+    const user = request.authUser!;
 
     const schema = z.object({
       companyId: z.string().optional(),
@@ -80,7 +80,7 @@ export async function nfseRoutes(app: FastifyInstance) {
     });
 
     const body = schema.parse(request.body);
-    const companyId = user.role === "admin" ? (body.companyId || user.companyId) : user.companyId;
+    const companyId = user.role === "admin" ? (body.companyId || user.companyId!) : user.companyId!;
     if (!companyId) {
       return reply.status(400).send({ error: "companyId é obrigatório" });
     }
@@ -102,8 +102,8 @@ export async function nfseRoutes(app: FastifyInstance) {
   /* ─── Emissão ─── */
 
   app.post("/emitir", async (request, reply) => {
-    await requireRoles(request, ["admin", "company"]);
-    const user = request.user!;
+    await requireRoles(["admin", "company"])(request, reply);
+    const user = request.authUser!;
 
     const schema = z.object({
       companyId: z.string().optional(),
@@ -144,8 +144,8 @@ export async function nfseRoutes(app: FastifyInstance) {
   /* ─── Emissão automática a partir de agendamento ─── */
 
   app.post("/emitir-por-agendamento/:appointmentId", async (request, reply) => {
-    await requireRoles(request, ["admin", "company"]);
-    const user = request.user!;
+    await requireRoles(["admin", "company"])(request, reply);
+    const user = request.authUser!;
     const { appointmentId } = request.params as { appointmentId: string };
 
     const appointment = await prisma.barberAppointment.findUnique({
@@ -198,7 +198,7 @@ export async function nfseRoutes(app: FastifyInstance) {
   /* ─── Consulta de status ─── */
 
   app.get("/status/:id", async (request, reply) => {
-    await requireRoles(request, ["admin", "company"]);
+    await requireRoles(["admin", "company"])(request, reply);
     const { id } = request.params as { id: string };
     return nfseService.consultarStatus(id);
   });
@@ -206,11 +206,11 @@ export async function nfseRoutes(app: FastifyInstance) {
   /* ─── Listagem ─── */
 
   app.get("/", async (request, reply) => {
-    await requireRoles(request, ["admin", "company"]);
-    const user = request.user!;
+    await requireRoles(["admin", "company"])(request, reply);
+    const user = request.authUser!;
     const query = request.query as { companyId?: string; status?: string; page?: string; pageSize?: string };
 
-    const companyId = user.role === "admin" ? (query.companyId || user.companyId) : user.companyId;
+    const companyId = user.role === "admin" ? (query.companyId || user.companyId!) : user.companyId!;
     if (!companyId) {
       return reply.status(400).send({ error: "companyId é obrigatório" });
     }
@@ -225,7 +225,7 @@ export async function nfseRoutes(app: FastifyInstance) {
   /* ─── Download PDF ─── */
 
   app.get("/pdf/:id", async (request, reply) => {
-    await requireRoles(request, ["admin", "company"]);
+    await requireRoles(["admin", "company"])(request, reply);
     const { id } = request.params as { id: string };
 
     const pdf = await nfseService.downloadPdf(id);
@@ -242,7 +242,7 @@ export async function nfseRoutes(app: FastifyInstance) {
   /* ─── Reenviar PDF por WhatsApp ─── */
 
   app.post("/enviar-whatsapp/:id", async (request, reply) => {
-    await requireRoles(request, ["admin", "company"]);
+    await requireRoles(["admin", "company"])(request, reply);
     const { id } = request.params as { id: string };
 
     const doc = await prisma.nfseServiceDocument.findUniqueOrThrow({
@@ -260,7 +260,7 @@ export async function nfseRoutes(app: FastifyInstance) {
   /* ─── Cancelamento ─── */
 
   app.post("/cancelar/:id", async (request, reply) => {
-    await requireRoles(request, ["admin", "company"]);
+    await requireRoles(["admin", "company"])(request, reply);
     const { id } = request.params as { id: string };
 
     const schema = z.object({
@@ -274,8 +274,8 @@ export async function nfseRoutes(app: FastifyInstance) {
   /* ─── Dashboard NFS-e ─── */
 
   app.get("/dashboard", async (request, reply) => {
-    await requireRoles(request, ["admin", "company"]);
-    const user = request.user!;
+    await requireRoles(["admin", "company"])(request, reply);
+    const user = request.authUser!;
     const query = request.query as { companyId?: string };
     const companyId = user.role === "admin" ? (query.companyId || user.companyId) : user.companyId;
     if (!companyId) {

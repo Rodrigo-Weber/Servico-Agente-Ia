@@ -97,9 +97,9 @@ export class NfseService {
   /**
    * Cria o client HTTP para FocusNFe
    */
-  private async getClient(companyId: string): Promise<{
+  private async getClient(this: NfseService, companyId: string): Promise<{
     client: AxiosInstance;
-    config: NonNullable<Awaited<ReturnType<typeof this.getConfig>>>;
+    config: NonNullable<Awaited<ReturnType<NfseService["getConfig"]>>>;
   }> {
     const config = await this.getConfig(companyId);
     if (!config) {
