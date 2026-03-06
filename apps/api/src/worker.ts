@@ -4,15 +4,29 @@ import { startOutboundDispatchWorker } from "./modules/messages/dispatcher.worke
 import { disconnectRedisClients } from "./lib/redis.js";
 
 async function bootstrapWorker() {
-  await Promise.all([
-    startHourlyNfeScheduler({
-      runOnStart: false,
-      tag: "[worker]",
-    }),
-    startOutboundDispatchWorker({
-      tag: "[worker-dispatch]",
-    }),
-  ]);
+  const tasks = await startHourlyNfeScheduler({
+    runOnStart: false,
+    tag: "[worker]",
+  });
+
+  await startOutboundDispatchWorker({
+    tag: "[worker-dispatch]",
+  });
+
+  // Graceful shutdown
+  const shutdown = async (signal: string) => {
+    console.log(`[worker] ${signal} recebido, encerrando...`);
+    for (const task of tasks) {
+      task.stop();
+    }
+    await disconnectRedisClients();
+    await prisma.$disconnect();
+    console.log("[worker] Encerrado com sucesso.");
+    process.exit(0);
+  };
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 bootstrapWorker().catch(async (error) => {

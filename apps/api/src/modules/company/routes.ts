@@ -633,4 +633,242 @@ export async function companyRoutes(app: FastifyInstance): Promise<void> {
     },
     { prefix: "/company" },
   );
+
+  // ─── Owner Dashboard (all service types) ─────────────────────────────────
+  await app.register(
+    async (ownerApp) => {
+      ownerApp.addHook("preHandler", authenticate);
+      ownerApp.addHook("preHandler", requireRole("company"));
+
+      ownerApp.get("/owner-dashboard", async (request, reply) => {
+        const companyId = request.authUser?.companyId;
+        if (!companyId) {
+          return reply.code(400).send({ message: "Conta sem empresa vinculada" });
+        }
+
+        const company = await prisma.company.findUnique({
+          where: { id: companyId },
+          select: { id: true, aiType: true, active: true, monthlyMessageLimit: true, monthlyNfseLimit: true },
+        });
+        if (!company || !company.active) {
+          return reply.code(403).send({ message: "Empresa inativa" });
+        }
+
+        const now = new Date();
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+        // Common: messages last 7 days
+        const [messagesLast24h, messagesLast7d, aiProcessed7d] = await Promise.all([
+          prisma.messageLog.count({
+            where: { companyId, direction: "out", createdAt: { gte: new Date(now.getTime() - 24 * 60 * 60 * 1000) } },
+          }),
+          prisma.$queryRawUnsafe<Array<{ day: string; dir: string; cnt: bigint }>>(
+            `SELECT DATE_FORMAT(createdAt, '%a %d') as day, direction as dir, COUNT(*) as cnt
+             FROM MessageLog WHERE companyId = ? AND createdAt >= ?
+             GROUP BY day, dir ORDER BY MIN(createdAt)`,
+            companyId,
+            sevenDaysAgo,
+          ),
+          prisma.messageLog.count({
+            where: { companyId, direction: "in", createdAt: { gte: sevenDaysAgo }, status: "processed" },
+          }),
+        ]);
+        const totalIn7d = await prisma.messageLog.count({
+          where: { companyId, direction: "in", createdAt: { gte: sevenDaysAgo } },
+        });
+
+        // Build messages per day
+        const dayMap: Record<string, { in: number; out: number }> = {};
+        for (let i = 6; i >= 0; i--) {
+          const d = new Date(now);
+          d.setDate(d.getDate() - i);
+          const key = d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit" });
+          dayMap[key] = { in: 0, out: 0 };
+        }
+        for (const row of messagesLast7d) {
+          const k = row.day;
+          if (dayMap[k]) {
+            if (row.dir === "in") dayMap[k].in = Number(row.cnt);
+            else dayMap[k].out = Number(row.cnt);
+          }
+        }
+        const messagesPerDay = Object.entries(dayMap).map(([day, v]) => ({ day, ...v }));
+        const aiResponseRate = totalIn7d > 0 ? Math.round((aiProcessed7d / totalIn7d) * 100) : 100;
+
+        // Service-specific data
+        let appointmentsToday = 0;
+        let appointmentsMonth = 0;
+        let nfesImported = 0;
+        let pendingBillingAmount = 0;
+        let pendingBillingCount = 0;
+        let overdueBillingAmount = 0;
+        let overdueBillingCount = 0;
+
+        const appointmentsPerDay: Array<{ day: string; scheduled: number; completed: number; canceled: number }> = [];
+        const nfesPerDay: Array<{ day: string; imported: number; detected: number; failed: number }> = [];
+        const billingByStatus: Array<{ status: string; count: number }> = [];
+
+        if (company.aiType === "barber_booking") {
+          const [todayCount, monthCount, apptByDay] = await Promise.all([
+            prisma.barberAppointment.count({ where: { companyId, startsAt: { gte: todayStart } } }),
+            prisma.barberAppointment.count({ where: { companyId, startsAt: { gte: monthStart } } }),
+            prisma.$queryRawUnsafe<Array<{ day: string; st: string; cnt: bigint }>>(
+              `SELECT DATE_FORMAT(startsAt, '%a %d') as day, status as st, COUNT(*) as cnt
+               FROM BarberAppointment WHERE companyId = ? AND startsAt >= ?
+               GROUP BY day, st ORDER BY MIN(startsAt)`,
+              companyId,
+              sevenDaysAgo,
+            ),
+          ]);
+          appointmentsToday = todayCount;
+          appointmentsMonth = monthCount;
+
+          const apptDayMap: Record<string, { scheduled: number; completed: number; canceled: number }> = {};
+          for (let i = 6; i >= 0; i--) {
+            const d = new Date(now);
+            d.setDate(d.getDate() - i);
+            const key = d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit" });
+            apptDayMap[key] = { scheduled: 0, completed: 0, canceled: 0 };
+          }
+          for (const row of apptByDay) {
+            if (apptDayMap[row.day]) {
+              const st = row.st as keyof (typeof apptDayMap)[string];
+              if (st in apptDayMap[row.day]) {
+                apptDayMap[row.day][st] = Number(row.cnt);
+              }
+            }
+          }
+          appointmentsPerDay.push(...Object.entries(apptDayMap).map(([day, v]) => ({ day, ...v })));
+        }
+
+        if (company.aiType === "nfe_import") {
+          const [nfeCount30d, nfeByDay] = await Promise.all([
+            prisma.nfeDocument.count({ where: { companyId, status: "imported", createdAt: { gte: thirtyDaysAgo } } }),
+            prisma.$queryRawUnsafe<Array<{ day: string; st: string; cnt: bigint }>>(
+              `SELECT DATE_FORMAT(createdAt, '%a %d') as day, status as st, COUNT(*) as cnt
+               FROM NfeDocument WHERE companyId = ? AND createdAt >= ?
+               GROUP BY day, st ORDER BY MIN(createdAt)`,
+              companyId,
+              sevenDaysAgo,
+            ),
+          ]);
+          nfesImported = nfeCount30d;
+
+          const nfeDayMap: Record<string, { imported: number; detected: number; failed: number }> = {};
+          for (let i = 6; i >= 0; i--) {
+            const d = new Date(now);
+            d.setDate(d.getDate() - i);
+            const key = d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit" });
+            nfeDayMap[key] = { imported: 0, detected: 0, failed: 0 };
+          }
+          for (const row of nfeByDay) {
+            if (nfeDayMap[row.day]) {
+              const st = row.st as keyof (typeof nfeDayMap)[string];
+              if (st in nfeDayMap[row.day]) {
+                nfeDayMap[row.day][st] = Number(row.cnt);
+              }
+            }
+          }
+          nfesPerDay.push(...Object.entries(nfeDayMap).map(([day, v]) => ({ day, ...v })));
+        }
+
+        if (company.aiType === "billing") {
+          const billingAgg = await prisma.billingDocument.groupBy({
+            by: ["status"],
+            where: { companyId },
+            _count: { _all: true },
+            _sum: { amount: true },
+          });
+          for (const row of billingAgg) {
+            const count = row._count._all;
+            const amount = Number(row._sum.amount ?? 0);
+            if (row.status === "pending") {
+              pendingBillingCount = count;
+              pendingBillingAmount = amount;
+            } else if (row.status === "overdue") {
+              overdueBillingCount = count;
+              overdueBillingAmount = amount;
+            }
+            billingByStatus.push({
+              status: row.status === "pending" ? "A Vencer" : row.status === "overdue" ? "Vencidas" : "Pagas",
+              count,
+            });
+          }
+        }
+
+        // Generate recent alerts
+        const recentAlerts: Array<{ type: "info" | "warning" | "error"; message: string; time: string }> = [];
+
+        if (company.aiType === "nfe_import") {
+          if (nfesImported > 0) {
+            recentAlerts.push({ type: "info", message: `${nfesImported} NF-e(s) importadas nos ultimos 30 dias.`, time: "sync" });
+          }
+        }
+        if (company.aiType === "billing" && overdueBillingCount > 0) {
+          recentAlerts.push({ type: "warning", message: `${overdueBillingCount} cobranca(s) vencida(s) sem pagamento.`, time: "billing" });
+        }
+        if (company.aiType === "barber_booking" && appointmentsToday > 0) {
+          recentAlerts.push({ type: "info", message: `${appointmentsToday} agendamento(s) para hoje.`, time: "agenda" });
+        }
+
+        // Contagem mensal para limites de uso
+        const [messagesThisMonth, nfseThisMonth] = await Promise.all([
+          prisma.messageLog.count({
+            where: { companyId, direction: "out", createdAt: { gte: monthStart } },
+          }),
+          prisma.nfseServiceDocument.count({
+            where: { companyId, createdAt: { gte: monthStart } },
+          }).catch(() => 0),
+        ]);
+
+        // Alertas de limite
+        if (company.monthlyMessageLimit > 0 && messagesThisMonth > company.monthlyMessageLimit) {
+          const over = messagesThisMonth - company.monthlyMessageLimit;
+          recentAlerts.push({
+            type: "warning",
+            message: `Limite mensal de mensagens atingido! ${over.toLocaleString("pt-BR")} mensagem(ns) acima do limite de ${company.monthlyMessageLimit.toLocaleString("pt-BR")}.`,
+            time: "uso",
+          });
+        }
+        if (company.monthlyNfseLimit > 0 && nfseThisMonth > company.monthlyNfseLimit) {
+          const over = nfseThisMonth - company.monthlyNfseLimit;
+          recentAlerts.push({
+            type: "warning",
+            message: `Limite mensal de NFS-e atingido! ${over} nota(s) acima do limite de ${company.monthlyNfseLimit}.`,
+            time: "uso",
+          });
+        }
+
+        return reply.send({
+          generatedAt: now.toISOString(),
+          totals: {
+            pendingBillingAmount,
+            pendingBillingCount,
+            overdueBillingAmount,
+            overdueBillingCount,
+            appointmentsToday,
+            appointmentsMonth,
+            nfesImported,
+            messagesOut: messagesLast24h,
+            aiResponseRate,
+          },
+          usage: {
+            messagesThisMonth,
+            monthlyMessageLimit: company.monthlyMessageLimit,
+            nfseThisMonth,
+            monthlyNfseLimit: company.monthlyNfseLimit,
+          },
+          messagesPerDay,
+          appointmentsPerDay,
+          nfesPerDay,
+          billingByStatus,
+          recentAlerts,
+        });
+      });
+    },
+    { prefix: "/company" },
+  );
 }

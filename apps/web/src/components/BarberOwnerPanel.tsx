@@ -1799,5 +1799,7 @@ function StatCard({
 }
 
 function FeedbackBox({ message }: { message: string }) {
-  return <div className="rounded-xl border border-primary/25 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary">{message}</div>;
+  const isError = /falha|erro|invalid|nao foi|nao consegui|expirad/i.test(message);
+  const borderClass = isError ? "border-red-500/25 bg-red-500/10 text-red-400" : "border-primary/25 bg-primary/10 text-primary";
+  return <div className={`rounded-xl border px-4 py-2 text-sm font-semibold ${borderClass}`}>{message}</div>;
 }

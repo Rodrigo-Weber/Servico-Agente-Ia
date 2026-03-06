@@ -159,9 +159,33 @@ function getCertificateTone(status: string): { label: string; variant: "default"
 }
 
 function getServiceLabel(aiType: Exclude<ServiceType, null>): string {
-  if (aiType === "barber_booking") return "Motor de Agendamentos (IA)";
-  if (aiType === "billing") return "Cobranças e CRM";
-  return "NF-e (Importacao)";
+  if (aiType === "barber_booking") return "Agendamentos (IA)";
+  if (aiType === "billing") return "Cobranças / CRM";
+  return "NF-e Import";
+}
+
+function getServiceIcon(aiType: Exclude<ServiceType, null>): string {
+  if (aiType === "barber_booking") return "📅";
+  if (aiType === "billing") return "💰";
+  return "📄";
+}
+
+function getServiceColor(aiType: Exclude<ServiceType, null>): string {
+  if (aiType === "barber_booking") return "text-blue-400";
+  if (aiType === "billing") return "text-amber-400";
+  return "text-green-400";
+}
+
+type CompanyHealthItem = NonNullable<AdminMonitoringOverview["companyHealth"]>[number];
+
+function getServiceMetricsSummary(company: CompanyHealthItem): string {
+  if (company.aiType === "barber_booking") {
+    return `${company.barbers?.profiles ?? 0} profissionais | ${company.barbers?.services ?? 0} servicos | ${company.appointments?.total ?? 0} agendamentos`;
+  }
+  if (company.aiType === "billing") {
+    return `${company.billing?.pending ?? 0} pendentes | ${company.billing?.paid ?? 0} pagos | ${company.billing?.overdue ?? 0} vencidos`;
+  }
+  return `${company.nfes.imported} importadas | ${company.nfes.detected} detectadas | ${company.nfes.failed} falhas`;
 }
 
 function buildNumberDraftMap(company: Company | null): NumberDraftMap {
@@ -204,6 +228,8 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
     evolutionInstanceName: "",
     aiType: "nfe_import" as Exclude<ServiceType, null>,
     bookingSector: "barber" as "barber" | "clinic" | "car_wash" | "generic",
+    monthlyMessageLimit: 0,
+    monthlyNfseLimit: 0,
     active: true,
   });
 
@@ -225,6 +251,9 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
   const [monitoringTick, setMonitoringTick] = useState(() => Date.now());
   const [jobsPage, setJobsPage] = useState(1);
   const [jobsPageSize, setJobsPageSize] = useState(10);
+  const [monitoringTab, setMonitoringTab] = useState<"overview" | "health" | "jobs">("overview");
+  const [resettingCooldown, setResettingCooldown] = useState<string | null>(null);
+  const [companiesTab, setCompaniesTab] = useState<"list" | "create" | "config">("list");
   const [companySearch, setCompanySearch] = useState("");
 
   const filteredCompanies = useMemo(() => {
@@ -281,6 +310,8 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
         evolutionInstanceName: "",
         aiType: "nfe_import" as Exclude<ServiceType, null>,
         bookingSector: "barber" as const,
+        monthlyMessageLimit: 0,
+        monthlyNfseLimit: 0,
         active: true,
       });
       return;
@@ -294,6 +325,8 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
       evolutionInstanceName: selectedCompany.evolutionInstanceName || "",
       aiType: selectedCompany.aiType,
       bookingSector: selectedCompany.bookingSector || "barber",
+      monthlyMessageLimit: selectedCompany.monthlyMessageLimit ?? 0,
+      monthlyNfseLimit: selectedCompany.monthlyNfseLimit ?? 0,
       active: selectedCompany.active,
     });
   }, [selectedCompany]);
@@ -440,6 +473,8 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
       evolutionInstanceName?: string | null;
       aiType?: Exclude<ServiceType, null>;
       bookingSector?: "barber" | "clinic" | "car_wash" | "generic";
+      monthlyMessageLimit?: number;
+      monthlyNfseLimit?: number;
       active?: boolean;
     } = {
       cnpj: editForm.cnpj,
@@ -448,6 +483,8 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
       evolutionInstanceName: editForm.evolutionInstanceName || null,
       aiType: editForm.aiType,
       bookingSector: editForm.bookingSector,
+      monthlyMessageLimit: editForm.monthlyMessageLimit,
+      monthlyNfseLimit: editForm.monthlyNfseLimit,
       active: editForm.active,
     };
 
@@ -699,10 +736,33 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
   }
 
   if (activeView === "monitoring") {
+    const monitoringTabs = [
+      { key: "overview" as const, label: "Visao Geral" },
+      { key: "health" as const, label: "Saude por Empresa" },
+      { key: "jobs" as const, label: "Historico de Jobs" },
+    ];
+
     return (
       <div className="space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sync DF-e diario as 18:00</p>
+        {/* Header com abas */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex gap-1 rounded-lg bg-muted p-1">
+            {monitoringTabs.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                className={cn(
+                  "rounded-md px-4 py-2 text-sm font-semibold transition-all",
+                  monitoringTab === tab.key
+                    ? "bg-green-500/20 text-green-400 shadow-soft"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                onClick={() => setMonitoringTab(tab.key)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
           <div className="flex items-center gap-2">
             <select
               className="h-9 rounded-lg border border-input bg-card px-2 text-xs font-semibold text-muted-foreground"
@@ -717,167 +777,353 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
               <option value={50}>50 logs</option>
             </select>
             <Button onClick={() => void loadMonitoring()} variant="outline" size="sm" disabled={loadingMonitoring}>
-              <RefreshCw className="mr-1.5 h-4 w-4" />
-              Atualizar monitoramento
+              <RefreshCw className={cn("mr-1.5 h-4 w-4", loadingMonitoring && "animate-spin")} />
+              Atualizar
             </Button>
           </div>
         </div>
 
-        <div className="rounded-xl border border-border/50 bg-muted/30 px-4 py-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Agenda de sincronizacao</p>
-          <p className="mt-1 text-sm font-semibold">O sync de NF-e roda apenas as 18:00, todos os dias.</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Proxima execucao: {formatDateTime(nextScheduledSyncAt.toISOString())} | Faltam{" "}
-            {formatScheduleCountdown(secondsUntilScheduledSync)}
-          </p>
-        </div>
+        {/* Aba: Visao Geral */}
+        {monitoringTab === "overview" ? (
+          <div className="space-y-6">
+            <div className="rounded-xl border border-border/50 bg-muted/30 px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Agenda de sincronizacao</p>
+              <p className="mt-1 text-sm font-semibold">Sync de NF-e roda as 18:00 diariamente com pausa de 1 min entre lojas.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Proxima execucao: {formatDateTime(nextScheduledSyncAt.toISOString())} | Faltam{" "}
+                {formatScheduleCountdown(secondsUntilScheduledSync)}
+              </p>
+            </div>
 
-        {loadingMonitoring ? (
-          <div className="flex items-center gap-3 rounded-2xl border border-border/50 bg-muted/30 p-6">
-            <RefreshCw className="h-5 w-5 animate-spin text-green-400" />
-            <span className="text-sm font-semibold text-muted-foreground">Atualizando dados operacionais...</span>
+            <div className="grid auto-rows-fr gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard icon={Building2} label="Empresas ativas" value={monitoring?.totals.activeCompanies ?? 0} raw={`Total: ${monitoring?.totals.companies ?? 0}`} />
+              <StatCard
+                icon={ShieldCheck}
+                label="Certificados validos"
+                value={monitoring?.totals.certificates.valid ?? 0}
+                raw={`Expirando: ${monitoring?.totals.certificates.expiring ?? 0} | Expirados: ${monitoring?.totals.certificates.expired ?? 0}`}
+              />
+              <StatCard
+                icon={Users}
+                label="Fila Atendimento"
+                value={monitoring?.totals.jobs24h.total ?? 0}
+                raw={`Sucesso: ${monitoring?.totals.jobs24h.success ?? 0} | Falha: ${monitoring?.totals.jobs24h.failed ?? 0} | Espera: ${companiesCoolingDownLive}`}
+              />
+              <StatCard
+                icon={MessageSquare}
+                label="Mensagens 24h"
+                value={monitoring?.totals.messages24h.inbound ?? 0}
+                raw={`Saida: ${monitoring?.totals.messages24h.outbound ?? 0} | Falha: ${monitoring?.totals.messages24h.failed ?? 0}`}
+              />
+            </div>
+
+            {/* Resumo rapido de cada empresa */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Status rapido</CardTitle>
+                <CardDescription>Resumo compacto de cada empresa monitorada.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-left">
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Empresa</th>
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Servico</th>
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</th>
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Certificado</th>
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Metricas</th>
+                        <th className="pb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Cooldown</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/50">
+                      {(monitoring?.companyHealth ?? []).map((company) => {
+                        const certTone = getCertificateTone(company.certificate.status);
+                        const liveWaitSeconds = getLiveWaitSeconds(company.sync.waitSeconds, monitoring?.generatedAt, monitoringTick);
+                        return (
+                          <tr key={company.companyId}>
+                            <td className="py-2.5 pr-4">
+                              <p className="font-semibold">{company.name}</p>
+                              <p className="text-xs text-muted-foreground">{company.cnpj}</p>
+                            </td>
+                            <td className="py-2.5 pr-4">
+                              <span className={cn("text-xs font-semibold", getServiceColor(company.aiType))}>
+                                {getServiceIcon(company.aiType)} {getServiceLabel(company.aiType)}
+                              </span>
+                            </td>
+                            <td className="py-2.5 pr-4">
+                              <Badge variant={company.active ? "default" : "secondary"}>{company.active ? "Ativa" : "Inativa"}</Badge>
+                            </td>
+                            <td className="py-2.5 pr-4">
+                              <Badge variant={certTone.variant}>{certTone.label}</Badge>
+                              {company.certificate.daysRemaining !== null ? (
+                                <span className="ml-1 text-xs text-muted-foreground">{company.certificate.daysRemaining}d</span>
+                              ) : null}
+                            </td>
+                            <td className="py-2.5 pr-4 text-xs text-muted-foreground">
+                              {getServiceMetricsSummary(company)}
+                            </td>
+                            <td className="py-2.5 text-xs">
+                              {(liveWaitSeconds ?? 0) > 0 ? (
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="secondary">{formatWaitSeconds(liveWaitSeconds)}</Badge>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 px-2 text-xs"
+                                    disabled={resettingCooldown === company.companyId}
+                                    onClick={async () => {
+                                      setResettingCooldown(company.companyId);
+                                      try {
+                                        await api.resetCompanyCooldown(token, company.companyId);
+                                        setFeedback(`Cooldown de ${company.name} resetado.`);
+                                        void loadMonitoring();
+                                      } catch (err) {
+                                        setFeedback(err instanceof Error ? err.message : "Falha ao resetar cooldown");
+                                      } finally {
+                                        setResettingCooldown(null);
+                                      }
+                                    }}
+                                  >
+                                    Resetar
+                                  </Button>
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         ) : null}
 
-        <div className="grid auto-rows-fr gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard icon={Building2} label="Empresas ativas" value={monitoring?.totals.activeCompanies ?? 0} raw={`Total: ${monitoring?.totals.companies ?? 0}`} />
-          <StatCard
-            icon={ShieldCheck}
-            label="Certificados validos"
-            value={monitoring?.totals.certificates.valid ?? 0}
-            raw={`Expirando: ${monitoring?.totals.certificates.expiring ?? 0} | Expirados: ${monitoring?.totals.certificates.expired ?? 0}`}
-          />
-          <StatCard
-            icon={Users}
-            label="Fila Atendimento"
-            value={monitoring?.totals.jobs24h.total ?? 0}
-            raw={`Sucesso: ${monitoring?.totals.jobs24h.success ?? 0} | Falha: ${monitoring?.totals.jobs24h.failed ?? 0} | Espera: ${companiesCoolingDownLive}`}
-          />
-          <StatCard
-            icon={MessageSquare}
-            label="Mensagens 24h"
-            value={monitoring?.totals.messages24h.inbound ?? 0}
-            raw={`Saida: ${monitoring?.totals.messages24h.outbound ?? 0} | Falha: ${monitoring?.totals.messages24h.failed ?? 0}`}
-          />
-        </div>
+        {/* Aba: Saude por Empresa */}
+        {monitoringTab === "health" ? (
+          <div className="space-y-4">
+            {(monitoring?.companyHealth ?? []).length === 0 ? <p className="text-sm text-muted-foreground">Sem empresas para monitorar.</p> : null}
 
-        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-          <Card>
-            <CardHeader>
-              <CardTitle>Saude por empresa</CardTitle>
-              <CardDescription>Validade do certificado, status de sync e volume de NF-e por empresa.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {(monitoring?.companyHealth ?? []).length === 0 ? <p className="text-sm text-muted-foreground">Sem empresas para monitorar.</p> : null}
-
-              {(monitoring?.companyHealth ?? []).map((company) => {
-                const certTone = getCertificateTone(company.certificate.status);
-                const liveWaitSeconds = getLiveWaitSeconds(company.sync.waitSeconds, monitoring?.generatedAt, monitoringTick);
-                return (
-                  <div key={company.companyId} className="rounded-xl border border-border/50 bg-muted/30 px-3 py-2.5">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
+            {(monitoring?.companyHealth ?? []).map((company) => {
+              const certTone = getCertificateTone(company.certificate.status);
+              const liveWaitSeconds = getLiveWaitSeconds(company.sync.waitSeconds, monitoring?.generatedAt, monitoringTick);
+              return (
+                <Card key={company.companyId}>
+                  <CardContent className="p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                       <div>
-                        <p className="font-semibold">{company.name}</p>
-                        <p className="text-xs text-muted-foreground">Documento: {company.cnpj}</p>
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg">{getServiceIcon(company.aiType)}</span>
+                          <p className="text-lg font-semibold">{company.name}</p>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          {company.cnpj} · <span className={getServiceColor(company.aiType)}>{getServiceLabel(company.aiType)}</span>
+                        </p>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <Badge variant={company.active ? "default" : "secondary"}>{company.active ? "Ativa" : "Inativa"}</Badge>
                         <Badge variant={certTone.variant}>{certTone.label}</Badge>
-                        <Badge variant="outline">Sync as 18:00</Badge>
-                        {(liveWaitSeconds ?? 0) > 0 ? <Badge variant="secondary">Cooldown tecnico</Badge> : null}
+                        {company.aiType !== "nfe_import" && company.evolutionInstanceName ? (
+                          <Badge variant="outline">Inst: {company.evolutionInstanceName}</Badge>
+                        ) : null}
+                        {(liveWaitSeconds ?? 0) > 0 ? (
+                          <>
+                            <Badge variant="secondary">Cooldown: {formatWaitSeconds(liveWaitSeconds)}</Badge>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs"
+                              disabled={resettingCooldown === company.companyId}
+                              onClick={async () => {
+                                setResettingCooldown(company.companyId);
+                                try {
+                                  await api.resetCompanyCooldown(token, company.companyId);
+                                  setFeedback(`Cooldown de ${company.name} resetado.`);
+                                  void loadMonitoring();
+                                } catch (err) {
+                                  setFeedback(err instanceof Error ? err.message : "Falha ao resetar cooldown");
+                                } finally {
+                                  setResettingCooldown(null);
+                                }
+                              }}
+                            >
+                              <RefreshCw className="mr-1 h-3 w-3" />
+                              Resetar cooldown
+                            </Button>
+                          </>
+                        ) : null}
                       </div>
                     </div>
 
-                    <div className="mt-2 grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
-                      <p>Valido ate: {formatDate(company.certificate.validTo)}</p>
-                      <p>Dias restantes: {company.certificate.daysRemaining ?? "-"}</p>
-                      <p>Ultimo sync: {formatDateTime(company.sync.lastSyncAt)}</p>
-                      <p>Status sync: {company.sync.lastSyncStatus ?? "-"}</p>
-                      <p>Agenda: Diario as 18:00</p>
-                      <p>Tempo ate 18:00: {formatScheduleCountdown(secondsUntilScheduledSync)}</p>
-                      <p>Proximo ciclo: {formatDateTime(nextScheduledSyncAt.toISOString())}</p>
-                      <p>Cooldown tecnico: {formatWaitSeconds(liveWaitSeconds)}</p>
-                      <p>
-                        NF-e: imp {company.nfes.imported} | det {company.nfes.detected} | falha {company.nfes.failed}
-                      </p>
-                      <p>
-                        Numeros: {company.whatsappNumbers.active}/{company.whatsappNumbers.total}
-                      </p>
+                    <div className="grid gap-3 text-sm md:grid-cols-2 lg:grid-cols-4">
+                      {/* Card: Certificado (apenas NF-e) */}
+                      {company.aiType === "nfe_import" ? (
+                        <div className="rounded-lg border border-border/50 bg-muted/30 p-3 space-y-1">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Certificado A1</p>
+                          <p className="font-semibold">Valido ate: {formatDate(company.certificate.validTo)}</p>
+                          <p className="text-xs text-muted-foreground">Dias restantes: {company.certificate.daysRemaining ?? "-"}</p>
+                        </div>
+                      ) : null}
+
+                      {/* Card: Sincronizacao (apenas NF-e) */}
+                      {company.aiType === "nfe_import" ? (
+                        <div className="rounded-lg border border-border/50 bg-muted/30 p-3 space-y-1">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sincronizacao SEFAZ</p>
+                          <p className="font-semibold">Ultimo: {formatDateTime(company.sync.lastSyncAt)}</p>
+                          <p className="text-xs text-muted-foreground">Status: {company.sync.lastSyncStatus ?? "-"}</p>
+                        </div>
+                      ) : null}
+
+                      {/* Card: NF-e (apenas NF-e) */}
+                      {company.aiType === "nfe_import" ? (
+                        <div className="rounded-lg border border-border/50 bg-muted/30 p-3 space-y-1">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Notas Fiscais</p>
+                          <p className="font-semibold text-green-400">{company.nfes.imported} importadas</p>
+                          <p className="text-xs text-muted-foreground">{company.nfes.detected} detectadas | {company.nfes.failed} falhas</p>
+                        </div>
+                      ) : null}
+
+                      {/* Card: Agendamentos (barber_booking) */}
+                      {company.aiType === "barber_booking" ? (
+                        <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 space-y-1">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-blue-400">Agendamentos</p>
+                          <p className="font-semibold text-blue-400">{company.appointments?.scheduled ?? 0} agendados</p>
+                          <p className="text-xs text-muted-foreground">{company.appointments?.completed ?? 0} concluidos | {company.appointments?.canceled ?? 0} cancelados</p>
+                        </div>
+                      ) : null}
+
+                      {/* Card: Profissionais (barber_booking) */}
+                      {company.aiType === "barber_booking" ? (
+                        <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 space-y-1">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-blue-400">Equipe</p>
+                          <p className="font-semibold">{company.barbers?.profiles ?? 0} profissionais</p>
+                          <p className="text-xs text-muted-foreground">{company.barbers?.services ?? 0} servicos cadastrados</p>
+                        </div>
+                      ) : null}
+
+                      {/* Card: Cobrancas (billing) */}
+                      {company.aiType === "billing" ? (
+                        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 space-y-1">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-amber-400">Cobrancas</p>
+                          <p className="font-semibold text-amber-400">{company.billing?.pending ?? 0} pendentes</p>
+                          <p className="text-xs text-muted-foreground">{company.billing?.paid ?? 0} pagos | {company.billing?.overdue ?? 0} vencidos</p>
+                        </div>
+                      ) : null}
+
+                      {/* Card: Billing total (billing) */}
+                      {company.aiType === "billing" ? (
+                        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 space-y-1">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-amber-400">Total documentos</p>
+                          <p className="font-semibold">{company.billing?.total ?? 0} documentos</p>
+                          <p className="text-xs text-muted-foreground">Pendentes + pagos + vencidos</p>
+                        </div>
+                      ) : null}
+
+                      {/* Card: Numeros (todos) */}
+                      <div className="rounded-lg border border-border/50 bg-muted/30 p-3 space-y-1">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">WhatsApp</p>
+                        <p className="font-semibold">{company.whatsappNumbers.active}/{company.whatsappNumbers.total} numeros ativos</p>
+                        <p className="text-xs text-muted-foreground">Mensagens: entrada/saida via webhook</p>
+                      </div>
                     </div>
 
                     {company.sync.lastJob?.error ? (
-                      <div className="mt-2 rounded-lg border border-destructive/25 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-                        Erro ultimo job: {company.sync.lastJob.error}
+                      <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                        <FileWarning className="mr-1.5 inline h-4 w-4" />
+                        {company.sync.lastJob.error}
                       </div>
                     ) : null}
-                  </div>
-                );
-              })}
-            </CardContent>
-          </Card>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        ) : null}
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Ultimos jobs globais</CardTitle>
-              <CardDescription>Historico recente do worker de sincronizacao.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {(monitoring?.recentJobs ?? []).length === 0 ? <p className="text-sm text-muted-foreground">Nenhum job encontrado.</p> : null}
-
-              {(monitoring?.recentJobs ?? []).map((job) => (
-                <div key={job.id} className="rounded-xl border border-border/50 bg-muted/30 px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <Badge variant={job.status === "success" ? "default" : job.status === "running" ? "secondary" : "destructive"}>
-                      {job.status}
-                    </Badge>
-                    <p className="text-xs text-muted-foreground">{formatDateTime(job.startedAt)}</p>
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">{job.company?.name || "Sem empresa"}</p>
-                  {job.error ? (
-                    <p className="mt-1 flex items-start gap-1 text-xs text-destructive">
-                      <FileWarning className="mt-0.5 h-3.5 w-3.5" />
-                      <span>{job.error}</span>
-                    </p>
-                  ) : (
-                    <p className="mt-1 text-xs text-muted-foreground">Execucao sem erro.</p>
-                  )}
+        {/* Aba: Historico de Jobs */}
+        {monitoringTab === "jobs" ? (
+          <div className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Historico de jobs — sincronizacao</CardTitle>
+                <CardDescription>Todas as execucoes do worker ordenadas por data.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-left">
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</th>
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Empresa</th>
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Inicio</th>
+                        <th className="pb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Detalhes</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/50">
+                      {(monitoring?.recentJobs ?? []).map((job) => (
+                        <tr key={job.id}>
+                          <td className="py-2.5 pr-4">
+                            <Badge variant={job.status === "success" ? "default" : job.status === "running" ? "secondary" : "destructive"}>
+                              {job.status}
+                            </Badge>
+                          </td>
+                          <td className="py-2.5 pr-4 font-semibold">{job.company?.name || "Sem empresa"}</td>
+                          <td className="py-2.5 pr-4 text-xs text-muted-foreground">{formatDateTime(job.startedAt)}</td>
+                          <td className="py-2.5">
+                            {job.error ? (
+                              <span className="flex items-start gap-1 text-xs text-destructive">
+                                <FileWarning className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                <span>{job.error}</span>
+                              </span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">OK</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              ))}
 
-              <div className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/30 px-3 py-2">
-                <p className="text-xs text-muted-foreground">
-                  Pagina {monitoring?.jobsPagination.page ?? jobsPage} de {monitoring?.jobsPagination.totalPages ?? 1} | Total:{" "}
-                  {monitoring?.jobsPagination.total ?? 0}
-                </p>
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={loadingMonitoring || (monitoring?.jobsPagination.page ?? jobsPage) <= 1}
-                    onClick={() => setJobsPage((prev) => Math.max(1, prev - 1))}
-                  >
-                    Anterior
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      loadingMonitoring ||
-                      (monitoring?.jobsPagination.page ?? jobsPage) >= (monitoring?.jobsPagination.totalPages ?? 1)
-                    }
-                    onClick={() =>
-                      setJobsPage((prev) =>
-                        Math.min(monitoring?.jobsPagination.totalPages ?? prev + 1, prev + 1),
-                      )
-                    }
-                  >
-                    Proxima
-                  </Button>
+                <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
+                  <p className="text-xs text-muted-foreground">
+                    Pagina {monitoring?.jobsPagination.page ?? jobsPage} de {monitoring?.jobsPagination.totalPages ?? 1} | Total:{" "}
+                    {monitoring?.jobsPagination.total ?? 0}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={loadingMonitoring || (monitoring?.jobsPagination.page ?? jobsPage) <= 1}
+                      onClick={() => setJobsPage((prev) => Math.max(1, prev - 1))}
+                    >
+                      Anterior
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={
+                        loadingMonitoring ||
+                        (monitoring?.jobsPagination.page ?? jobsPage) >= (monitoring?.jobsPagination.totalPages ?? 1)
+                      }
+                      onClick={() =>
+                        setJobsPage((prev) =>
+                          Math.min(monitoring?.jobsPagination.totalPages ?? prev + 1, prev + 1),
+                        )
+                      }
+                    >
+                      Proxima
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+              </CardContent>
+            </Card>
+          </div>
+        ) : null}
 
         {feedback ? <FeedbackBox message={feedback} /> : null}
       </div>
@@ -1171,123 +1417,48 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
   }
 
   if (activeView === "companies") {
+    const companyTabs = [
+      { key: "list" as const, label: "Empresas" },
+      { key: "create" as const, label: "Nova Empresa" },
+      { key: "config" as const, label: "Configuracao" },
+    ];
+
     return (
       <div className="space-y-6">
-        <div className="grid gap-6 xl:grid-cols-[1fr_1fr_1.25fr]">
-          <Card>
-            <CardHeader>
-              <CardTitle>Nova empresa</CardTitle>
-              <CardDescription>Selecione um template para criar rapidamente.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {/* ── Template Quick Select ── */}
-              <div className="mb-4 space-y-2">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">Template</p>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {[
-                    { slug: "", label: "Manual", icon: "⚙️" },
-                    { slug: "lava_jato", label: "Lava Jato", icon: "🚗" },
-                    { slug: "barbearia", label: "Barbearia", icon: "✂️" },
-                    { slug: "clinica_estetica", label: "Clínica", icon: "🏥" },
-                    { slug: "pet_shop", label: "Pet Shop", icon: "🐾" },
-                    { slug: "oficina_mecanica", label: "Oficina", icon: "🔧" },
-                    { slug: "cobranca", label: "Cobranças", icon: "💰" },
-                    { slug: "nfe_import", label: "NF-e Import", icon: "📄" },
-                  ].map((tpl) => (
-                    <button
-                      key={tpl.slug}
-                      type="button"
-                      onClick={() => {
-                        if (tpl.slug === "lava_jato") {
-                          setCreateForm((prev) => ({ ...prev, aiType: "barber_booking", bookingSector: "car_wash" as any }));
-                        } else if (tpl.slug === "barbearia") {
-                          setCreateForm((prev) => ({ ...prev, aiType: "barber_booking", bookingSector: "barber" as any }));
-                        } else if (tpl.slug === "clinica_estetica") {
-                          setCreateForm((prev) => ({ ...prev, aiType: "barber_booking", bookingSector: "clinic" as any }));
-                        } else if (tpl.slug === "pet_shop" || tpl.slug === "oficina_mecanica") {
-                          setCreateForm((prev) => ({ ...prev, aiType: "barber_booking", bookingSector: "generic" as any }));
-                        } else if (tpl.slug === "cobranca") {
-                          setCreateForm((prev) => ({ ...prev, aiType: "billing" }));
-                        } else {
-                          setCreateForm((prev) => ({ ...prev, aiType: "nfe_import" }));
-                        }
-                      }}
-                      className={cn(
-                        "flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all duration-200",
-                        (tpl.slug === "" && createForm.aiType === "nfe_import") ||
-                        (tpl.slug === "lava_jato" && createForm.bookingSector === "car_wash" && createForm.aiType === "barber_booking") ||
-                        (tpl.slug === "barbearia" && createForm.bookingSector === "barber" && createForm.aiType === "barber_booking") ||
-                        (tpl.slug === "clinica_estetica" && createForm.bookingSector === "clinic" && createForm.aiType === "barber_booking") ||
-                        (tpl.slug === "cobranca" && createForm.aiType === "billing")
-                          ? "border-primary/40 bg-primary/10 text-primary"
-                          : "border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40",
-                      )}
-                    >
-                      <span>{tpl.icon}</span>
-                      <span>{tpl.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
+        {/* Header com abas */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex gap-1 rounded-lg bg-muted p-1">
+            {companyTabs.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                className={cn(
+                  "rounded-md px-4 py-2 text-sm font-semibold transition-all",
+                  companiesTab === tab.key
+                    ? "bg-green-500/20 text-green-400 shadow-soft"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                onClick={() => setCompaniesTab(tab.key)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">{companies.length} empresa(s) cadastrada(s)</p>
+        </div>
 
-              <div className="h-px bg-border/40 mb-4" />
-
-              <form onSubmit={handleCreateCompany} className="space-y-3">
-                <div className="form-group">
-                  <label className="form-label">Documento</label>
-                  <Input placeholder="CNPJ ou CPF" value={createForm.cnpj} onChange={(e) => setCreateForm((prev) => ({ ...prev, cnpj: e.target.value }))} required />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Nome da empresa</label>
-                  <Input placeholder="Ex: Lava Jato Premium" value={createForm.name} onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))} required />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="form-group">
-                    <label className="form-label">Email</label>
-                    <Input placeholder="email@empresa.com" type="email" value={createForm.email} onChange={(e) => setCreateForm((prev) => ({ ...prev, email: e.target.value }))} required />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Senha</label>
-                    <Input placeholder="Min 8 chars" type="password" minLength={8} value={createForm.password} onChange={(e) => setCreateForm((prev) => ({ ...prev, password: e.target.value }))} required />
-                  </div>
-                </div>
-                {createForm.aiType === "barber_booking" || createForm.aiType === "billing" ? (
-                  <div className="form-group">
-                    <label className="form-label">Instância Evolution</label>
-                    <Input
-                      placeholder={
-                        createForm.aiType === "billing"
-                          ? "Ex: cobranca_matriz"
-                          : "Ex: agendamento_matriz"
-                      }
-                      value={createForm.evolutionInstanceName}
-                      onChange={(e) => setCreateForm((prev) => ({ ...prev, evolutionInstanceName: e.target.value }))}
-                      required
-                    />
-                  </div>
-                ) : null}
-                <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-                  <input type="checkbox" className="rounded border-input" checked={createForm.active} onChange={(e) => setCreateForm((prev) => ({ ...prev, active: e.target.checked }))} />
-                  Conta ativa
-                </label>
-                <Button type="submit" className="w-full" variant="default">
-                  <Plus className="mr-1.5 h-4 w-4" />
-                  Criar empresa
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
-
+        {/* Aba: Lista de Empresas */}
+        {companiesTab === "list" ? (
           <Card>
             <CardHeader>
               <CardTitle>Empresas cadastradas</CardTitle>
-              <CardDescription>Selecione para editar dados, prompt e numeros autorizados.</CardDescription>
+              <CardDescription>Clique para selecionar e ir para a aba Configuracao.</CardDescription>
             </CardHeader>
-            <CardContent className="max-h-[550px] overflow-auto space-y-2">
+            <CardContent className="space-y-4">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar empresa..."
+                  placeholder="Buscar por nome, documento ou email..."
                   value={companySearch}
                   onChange={(e) => setCompanySearch(e.target.value)}
                   className="pl-9"
@@ -1296,63 +1467,256 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
               {companySearch ? (
                 <p className="text-xs text-muted-foreground">{filteredCompanies.length} de {companies.length} empresas</p>
               ) : null}
+
               {filteredCompanies.length === 0 ? (
                 <EmptyState
                   icon={Building2}
                   title={companySearch ? "Nenhuma empresa encontrada" : "Nenhuma empresa cadastrada"}
-                  description={companySearch ? "Tente ajustar a busca." : "Crie a primeira empresa no formulário ao lado."}
+                  description={companySearch ? "Tente ajustar a busca." : "Use a aba 'Nova Empresa' para cadastrar."}
                 />
-              ) : null}
-              {filteredCompanies.map((company) => (
-                <button
-                  key={company.id}
-                  onClick={() => setSelectedCompanyId(company.id)}
-                  className={cn(
-                    "w-full rounded-xl border px-3 py-2 text-left transition",
-                    selectedCompanyId === company.id ? "border-green-500/30 bg-green-500/10" : "border-border/50 bg-muted/30 hover:bg-muted/50",
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="font-semibold">{company.name}</p>
-                    <Badge variant={company.active ? "default" : "secondary"}>{company.active ? "Ativa" : "Inativa"}</Badge>
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">Documento: {company.cnpj}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    servico: {getServiceLabel(company.aiType)} | numeros: {company.whatsappNumbers.length}
-                  </p>
-                  {company.aiType === "barber_booking" || company.aiType === "billing" ? (
-                    <p className="text-xs text-muted-foreground">instancia: {company.evolutionInstanceName || "nao configurada"}</p>
-                  ) : null}
-                </button>
-              ))}
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-left">
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Nome</th>
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Documento</th>
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Servico</th>
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</th>
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Uso mensal</th>
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Numeros</th>
+                        <th className="pb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Acoes</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/50">
+                      {filteredCompanies.map((company) => (
+                        <tr
+                          key={company.id}
+                          className={cn(
+                            "cursor-pointer transition-colors",
+                            selectedCompanyId === company.id ? "bg-green-500/5" : "hover:bg-muted/40",
+                          )}
+                          onClick={() => {
+                            setSelectedCompanyId(company.id);
+                            setCompaniesTab("config");
+                          }}
+                        >
+                          <td className="py-2.5 pr-4">
+                            <p className="font-semibold">{company.name}</p>
+                            <p className="text-xs text-muted-foreground">{company.email}</p>
+                          </td>
+                          <td className="py-2.5 pr-4 text-xs text-muted-foreground">{company.cnpj}</td>
+                          <td className="py-2.5 pr-4">
+                            <span className="text-xs">{getServiceLabel(company.aiType)}</span>
+                          </td>
+                          <td className="py-2.5 pr-4">
+                            <Badge variant={company.active ? "default" : "secondary"}>{company.active ? "Ativa" : "Inativa"}</Badge>
+                          </td>
+                          <td className="py-2.5 pr-4">
+                            {company._usage ? (
+                              <div className="flex flex-col gap-0.5 text-[11px]">
+                                <span className={company.monthlyMessageLimit > 0 && company._usage.messagesThisMonth > company.monthlyMessageLimit ? "font-bold text-red-400" : "text-muted-foreground"}>
+                                  📤 {company._usage.messagesThisMonth.toLocaleString("pt-BR")}{company.monthlyMessageLimit > 0 ? ` / ${company.monthlyMessageLimit.toLocaleString("pt-BR")}` : ""}
+                                </span>
+                                {company.monthlyNfseLimit > 0 || (company._usage.nfseThisMonth > 0) ? (
+                                  <span className={company.monthlyNfseLimit > 0 && company._usage.nfseThisMonth > company.monthlyNfseLimit ? "font-bold text-red-400" : "text-muted-foreground"}>
+                                    📝 {company._usage.nfseThisMonth.toLocaleString("pt-BR")}{company.monthlyNfseLimit > 0 ? ` / ${company.monthlyNfseLimit.toLocaleString("pt-BR")}` : ""}
+                                  </span>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-muted-foreground">—</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 pr-4 text-xs text-muted-foreground">{company.whatsappNumbers.length}</td>
+                          <td className="py-2.5">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedCompanyId(company.id);
+                                setCompaniesTab("config");
+                              }}
+                            >
+                              Editar
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </CardContent>
           </Card>
+        ) : null}
 
+        {/* Aba: Nova Empresa */}
+        {companiesTab === "create" ? (
           <Card>
             <CardHeader>
-              <CardTitle>Configuracao da empresa</CardTitle>
-              <CardDescription>Edite os dados da empresa e as regras de atendimento de cada servico.</CardDescription>
+              <CardTitle>Cadastrar nova empresa</CardTitle>
+              <CardDescription>Selecione um template para criar rapidamente ou preencha manualmente.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-5">
+            <CardContent>
+              <div className="max-w-2xl mx-auto space-y-6">
+                {/* Template Quick Select */}
+                <div className="space-y-2">
+                  <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground/60">Template</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {[
+                      { slug: "", label: "Manual", icon: "⚙️" },
+                      { slug: "lava_jato", label: "Lava Jato", icon: "🚗" },
+                      { slug: "barbearia", label: "Barbearia", icon: "✂️" },
+                      { slug: "clinica_estetica", label: "Clínica", icon: "🏥" },
+                      { slug: "pet_shop", label: "Pet Shop", icon: "🐾" },
+                      { slug: "oficina_mecanica", label: "Oficina", icon: "🔧" },
+                      { slug: "cobranca", label: "Cobranças", icon: "💰" },
+                      { slug: "nfe_import", label: "NF-e Import", icon: "📄" },
+                    ].map((tpl) => (
+                      <button
+                        key={tpl.slug}
+                        type="button"
+                        onClick={() => {
+                          if (tpl.slug === "lava_jato") {
+                            setCreateForm((prev) => ({ ...prev, aiType: "barber_booking", bookingSector: "car_wash" as any }));
+                          } else if (tpl.slug === "barbearia") {
+                            setCreateForm((prev) => ({ ...prev, aiType: "barber_booking", bookingSector: "barber" as any }));
+                          } else if (tpl.slug === "clinica_estetica") {
+                            setCreateForm((prev) => ({ ...prev, aiType: "barber_booking", bookingSector: "clinic" as any }));
+                          } else if (tpl.slug === "pet_shop" || tpl.slug === "oficina_mecanica") {
+                            setCreateForm((prev) => ({ ...prev, aiType: "barber_booking", bookingSector: "generic" as any }));
+                          } else if (tpl.slug === "cobranca") {
+                            setCreateForm((prev) => ({ ...prev, aiType: "billing" }));
+                          } else {
+                            setCreateForm((prev) => ({ ...prev, aiType: "nfe_import" }));
+                          }
+                        }}
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-lg border px-3 py-2.5 text-sm font-medium transition-all duration-200",
+                          (tpl.slug === "" && createForm.aiType === "nfe_import") ||
+                          (tpl.slug === "lava_jato" && createForm.bookingSector === "car_wash" && createForm.aiType === "barber_booking") ||
+                          (tpl.slug === "barbearia" && createForm.bookingSector === "barber" && createForm.aiType === "barber_booking") ||
+                          (tpl.slug === "clinica_estetica" && createForm.bookingSector === "clinic" && createForm.aiType === "barber_booking") ||
+                          (tpl.slug === "cobranca" && createForm.aiType === "billing")
+                            ? "border-primary/40 bg-primary/10 text-primary"
+                            : "border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40",
+                        )}
+                      >
+                        <span>{tpl.icon}</span>
+                        <span>{tpl.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="h-px bg-border/40" />
+
+                <form onSubmit={handleCreateCompany} className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="form-group">
+                      <label className="form-label">Documento</label>
+                      <Input placeholder="CNPJ ou CPF" value={createForm.cnpj} onChange={(e) => setCreateForm((prev) => ({ ...prev, cnpj: e.target.value }))} required />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Nome da empresa</label>
+                      <Input placeholder="Ex: Lava Jato Premium" value={createForm.name} onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))} required />
+                    </div>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="form-group">
+                      <label className="form-label">Email</label>
+                      <Input placeholder="email@empresa.com" type="email" value={createForm.email} onChange={(e) => setCreateForm((prev) => ({ ...prev, email: e.target.value }))} required />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Senha</label>
+                      <Input placeholder="Min 8 chars" type="password" minLength={8} value={createForm.password} onChange={(e) => setCreateForm((prev) => ({ ...prev, password: e.target.value }))} required />
+                    </div>
+                  </div>
+                  {createForm.aiType === "barber_booking" || createForm.aiType === "billing" ? (
+                    <div className="form-group">
+                      <label className="form-label">Instância Evolution</label>
+                      <Input
+                        placeholder={
+                          createForm.aiType === "billing"
+                            ? "Ex: cobranca_matriz"
+                            : "Ex: agendamento_matriz"
+                        }
+                        value={createForm.evolutionInstanceName}
+                        onChange={(e) => setCreateForm((prev) => ({ ...prev, evolutionInstanceName: e.target.value }))}
+                        required
+                      />
+                    </div>
+                  ) : null}
+                  <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                    <input type="checkbox" className="rounded border-input" checked={createForm.active} onChange={(e) => setCreateForm((prev) => ({ ...prev, active: e.target.checked }))} />
+                    Conta ativa
+                  </label>
+                  <Button type="submit" variant="default">
+                    <Plus className="mr-1.5 h-4 w-4" />
+                    Criar empresa
+                  </Button>
+                </form>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {/* Aba: Configuracao */}
+        {companiesTab === "config" ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>
+                {selectedCompany ? `Configuracao — ${selectedCompany.name}` : "Configuracao da empresa"}
+              </CardTitle>
+              <CardDescription>
+                {selectedCompany
+                  ? "Edite os dados da empresa e as regras de atendimento."
+                  : "Selecione uma empresa na aba 'Empresas' para configurar."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
               {selectedCompany ? (
-                <>
-                  <form onSubmit={handleUpdateCompany} className="space-y-3">
-                    <Input placeholder="CNPJ ou CPF" value={editForm.cnpj} onChange={(e) => setEditForm((prev) => ({ ...prev, cnpj: e.target.value }))} required />
-                    <Input placeholder="Nome da empresa" value={editForm.name} onChange={(e) => setEditForm((prev) => ({ ...prev, name: e.target.value }))} required />
-                    <Input placeholder="Email da empresa" type="email" value={editForm.email} onChange={(e) => setEditForm((prev) => ({ ...prev, email: e.target.value }))} required />
-                    <Input placeholder="Nova senha (opcional)" type="password" value={editForm.password} onChange={(e) => setEditForm((prev) => ({ ...prev, password: e.target.value }))} />
-                    <select
-                      className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
-                      value={editForm.aiType}
-                      onChange={(e) => setEditForm((prev) => ({ ...prev, aiType: e.target.value as Exclude<ServiceType, null> }))}
-                    >
-                      <option value="nfe_import">NF-e (Importacao)</option>
-                      <option value="barber_booking">Motor de Agendamentos (IA)</option>
-                      <option value="billing">Cobranças e CRM</option>
-                    </select>
-                    {editForm.aiType === "barber_booking" || editForm.aiType === "billing" ? (
-                      <>
-                        {editForm.aiType === "barber_booking" ? (
+                <div className="max-w-3xl mx-auto space-y-6">
+                  <form onSubmit={handleUpdateCompany} className="space-y-4">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="form-group">
+                        <label className="form-label">Documento</label>
+                        <Input placeholder="CNPJ ou CPF" value={editForm.cnpj} onChange={(e) => setEditForm((prev) => ({ ...prev, cnpj: e.target.value }))} required />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Nome</label>
+                        <Input placeholder="Nome da empresa" value={editForm.name} onChange={(e) => setEditForm((prev) => ({ ...prev, name: e.target.value }))} required />
+                      </div>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="form-group">
+                        <label className="form-label">Email</label>
+                        <Input placeholder="Email da empresa" type="email" value={editForm.email} onChange={(e) => setEditForm((prev) => ({ ...prev, email: e.target.value }))} required />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Nova senha (opcional)</label>
+                        <Input placeholder="Deixe vazio para manter" type="password" value={editForm.password} onChange={(e) => setEditForm((prev) => ({ ...prev, password: e.target.value }))} />
+                      </div>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="form-group">
+                        <label className="form-label">Tipo de servico</label>
+                        <select
+                          className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                          value={editForm.aiType}
+                          onChange={(e) => setEditForm((prev) => ({ ...prev, aiType: e.target.value as Exclude<ServiceType, null> }))}
+                        >
+                          <option value="nfe_import">NF-e (Importacao)</option>
+                          <option value="barber_booking">Motor de Agendamentos (IA)</option>
+                          <option value="billing">Cobranças e CRM</option>
+                        </select>
+                      </div>
+                      {editForm.aiType === "barber_booking" ? (
+                        <div className="form-group">
+                          <label className="form-label">Setor</label>
                           <select
                             className="h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
                             value={editForm.bookingSector}
@@ -1363,15 +1727,67 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                             <option value="clinic">Clínicas e Consultórios</option>
                             <option value="generic">Agendamento Genérico</option>
                           </select>
-                        ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                    {editForm.aiType === "barber_booking" || editForm.aiType === "billing" ? (
+                      <div className="form-group">
+                        <label className="form-label">Instancia Evolution</label>
                         <Input
                           placeholder="Nome da instancia Evolution"
                           value={editForm.evolutionInstanceName}
                           onChange={(e) => setEditForm((prev) => ({ ...prev, evolutionInstanceName: e.target.value }))}
                           required
                         />
-                      </>
+                      </div>
                     ) : null}
+
+                    {/* ─── Limites de Uso Mensal ──────────────── */}
+                    <div className="rounded-xl border border-border/40 bg-muted/30 p-4 space-y-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/70">Limites de Uso (Mensal)</p>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="form-group">
+                          <label className="form-label">Limite de mensagens</label>
+                          <Input
+                            type="number"
+                            min={0}
+                            placeholder="0 = sem limite"
+                            value={editForm.monthlyMessageLimit}
+                            onChange={(e) => setEditForm((prev) => ({ ...prev, monthlyMessageLimit: parseInt(e.target.value) || 0 }))}
+                          />
+                          <p className="mt-1 text-[11px] text-muted-foreground">0 = ilimitado. Define o maximo de mensagens enviadas por mes.</p>
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Limite de NFS-e</label>
+                          <Input
+                            type="number"
+                            min={0}
+                            placeholder="0 = sem limite"
+                            value={editForm.monthlyNfseLimit}
+                            onChange={(e) => setEditForm((prev) => ({ ...prev, monthlyNfseLimit: parseInt(e.target.value) || 0 }))}
+                          />
+                          <p className="mt-1 text-[11px] text-muted-foreground">0 = ilimitado. Define o maximo de notas de servico emitidas por mes.</p>
+                        </div>
+                      </div>
+                      {selectedCompany?._usage ? (
+                        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                          <span>
+                            📤 Mensagens este mes:{" "}
+                            <strong className={selectedCompany._usage.messagesThisMonth > editForm.monthlyMessageLimit && editForm.monthlyMessageLimit > 0 ? "text-red-400" : "text-foreground"}>
+                              {selectedCompany._usage.messagesThisMonth.toLocaleString("pt-BR")}
+                            </strong>
+                            {editForm.monthlyMessageLimit > 0 ? ` / ${editForm.monthlyMessageLimit.toLocaleString("pt-BR")}` : ""}
+                          </span>
+                          <span>
+                            📝 NFS-e este mes:{" "}
+                            <strong className={selectedCompany._usage.nfseThisMonth > editForm.monthlyNfseLimit && editForm.monthlyNfseLimit > 0 ? "text-red-400" : "text-foreground"}>
+                              {selectedCompany._usage.nfseThisMonth.toLocaleString("pt-BR")}
+                            </strong>
+                            {editForm.monthlyNfseLimit > 0 ? ` / ${editForm.monthlyNfseLimit.toLocaleString("pt-BR")}` : ""}
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
 
                     <label className="flex items-center gap-2 text-sm text-muted-foreground">
                       <input type="checkbox" checked={editForm.active} onChange={(e) => setEditForm((prev) => ({ ...prev, active: e.target.checked }))} />
@@ -1387,85 +1803,84 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                   <div className="h-px w-full bg-border" />
 
                   {editForm.aiType === "nfe_import" ? (
-                    <>
-                      <form onSubmit={handleAddNumber} className="space-y-2">
-                        <p className="text-sm font-semibold">Adicionar numero autorizado</p>
-                        <div className="flex gap-2">
-                          <Input placeholder="5511999999999" value={newNumber} onChange={(event) => setNewNumber(event.target.value)} required />
-                          <Button type="submit" size="sm" variant="outline">
-                            <Plus className="h-4 w-4" />
-                          </Button>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          Dica: informe com DDI. O sistema bloqueia automaticamente o numero do proprio agente.
-                        </p>
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold">Numeros autorizados</p>
+                        <p className="text-xs text-muted-foreground">{selectedCompany.whatsappNumbers.length} numero(s)</p>
+                      </div>
+                      <form onSubmit={handleAddNumber} className="flex gap-2 max-w-md">
+                        <Input placeholder="5511999999999" value={newNumber} onChange={(event) => setNewNumber(event.target.value)} required />
+                        <Button type="submit" size="sm" variant="outline">
+                          <Plus className="mr-1 h-4 w-4" />
+                          Adicionar
+                        </Button>
                       </form>
+                      <p className="text-xs text-muted-foreground">
+                        Dica: informe com DDI. O sistema bloqueia automaticamente o numero do proprio agente.
+                      </p>
 
-                      <div className="space-y-2">
-                        {selectedCompany.whatsappNumbers.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">Nenhum numero autorizado para esta empresa.</p>
-                        ) : null}
-
-                        {selectedCompany.whatsappNumbers.map((number) => {
-                          const draft = numberDrafts[number.id] ?? {
-                            phone: number.phoneE164,
-                            active: number.active,
-                          };
-
-                          const isSaving = savingNumberId === number.id;
-                          const isDeleting = deletingNumberId === number.id;
-
-                          return (
-                            <div key={number.id} className="rounded-xl border border-border/50 bg-muted/30 p-2.5">
-                              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                                <Input
-                                  value={draft.phone}
-                                  onChange={(event) =>
-                                    setNumberDrafts((prev) => ({
-                                      ...prev,
-                                      [number.id]: {
-                                        ...draft,
-                                        phone: event.target.value,
-                                      },
-                                    }))
-                                  }
-                                />
-                                <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                  <input
-                                    type="checkbox"
-                                    checked={draft.active}
+                      {selectedCompany.whatsappNumbers.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">Nenhum numero autorizado para esta empresa.</p>
+                      ) : (
+                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                          {selectedCompany.whatsappNumbers.map((number) => {
+                            const draft = numberDrafts[number.id] ?? {
+                              phone: number.phoneE164,
+                              active: number.active,
+                            };
+                            const isSaving = savingNumberId === number.id;
+                            const isDeleting = deletingNumberId === number.id;
+                            return (
+                              <div key={number.id} className="rounded-xl border border-border/50 bg-muted/30 p-3">
+                                <div className="flex flex-col gap-2">
+                                  <Input
+                                    value={draft.phone}
                                     onChange={(event) =>
                                       setNumberDrafts((prev) => ({
                                         ...prev,
-                                        [number.id]: {
-                                          ...draft,
-                                          active: event.target.checked,
-                                        },
+                                        [number.id]: { ...draft, phone: event.target.value },
                                       }))
                                     }
                                   />
-                                  ativo
-                                </label>
-                                <Button type="button" size="sm" onClick={() => void handleSaveNumber(number.id)} disabled={isSaving || isDeleting}>
-                                  <Save className="h-3.5 w-3.5" />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="destructive"
-                                  onClick={() => void handleDeleteNumber(number.id)}
-                                  disabled={isSaving || isDeleting}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
+                                  <div className="flex items-center justify-between gap-2">
+                                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                      <input
+                                        type="checkbox"
+                                        checked={draft.active}
+                                        onChange={(event) =>
+                                          setNumberDrafts((prev) => ({
+                                            ...prev,
+                                            [number.id]: { ...draft, active: event.target.checked },
+                                          }))
+                                        }
+                                      />
+                                      ativo
+                                    </label>
+                                    <div className="flex gap-1">
+                                      <Button type="button" size="sm" variant="ghost" className="h-7 px-2" onClick={() => void handleSaveNumber(number.id)} disabled={isSaving || isDeleting}>
+                                        <Save className="h-3.5 w-3.5" />
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="destructive"
+                                        className="h-7 px-2"
+                                        onClick={() => void handleDeleteNumber(number.id)}
+                                        disabled={isSaving || isDeleting}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   ) : (
-                    <div className="rounded-xl border border-border/50 bg-muted/30 p-3">
+                    <div className="rounded-xl border border-border/50 bg-muted/30 p-4">
                       <p className="text-sm font-semibold">
                         {editForm.aiType === "billing" ? "Regra de atendimento da cobranca" : "Regra de atendimento do agendamento"}
                       </p>
@@ -1477,13 +1892,17 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
                       </p>
                     </div>
                   )}
-                </>
+                </div>
               ) : (
-                <p className="text-sm text-muted-foreground">Selecione uma empresa para editar os dados e numeros.</p>
+                <EmptyState
+                  icon={Building2}
+                  title="Nenhuma empresa selecionada"
+                  description="Selecione uma empresa na aba 'Empresas' para configurar."
+                />
               )}
             </CardContent>
           </Card>
-        </div>
+        ) : null}
 
         {feedback ? <FeedbackBox message={feedback} /> : null}
       </div>
@@ -1607,10 +2026,13 @@ function StatCard({
 
 function FeedbackBox({ message }: { message: string }) {
   if (!message) return null;
+  const isError = /falha|erro|invalid|nao foi|nao consegui|expirad/i.test(message);
+  const colorClass = isError ? "border-red-500/20 text-red-400" : "border-green-500/20 text-green-400";
+  const iconBg = isError ? "bg-red-500/10" : "bg-green-500/10";
   return (
     <div className="fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-4">
-      <div className="flex items-center gap-2 rounded-xl border border-green-500/20 bg-background/90 px-4 py-3 text-sm font-semibold text-green-400 shadow-2xl backdrop-blur-md">
-        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-green-500/10">
+      <div className={`flex items-center gap-2 rounded-xl border bg-background/90 px-4 py-3 text-sm font-semibold shadow-2xl backdrop-blur-md ${colorClass}`}>
+        <div className={`flex h-6 w-6 items-center justify-center rounded-full ${iconBg}`}>
           <Check className="h-3.5 w-3.5" />
         </div>
         {message}

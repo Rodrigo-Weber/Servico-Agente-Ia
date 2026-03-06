@@ -21,6 +21,7 @@ import {
     FileText,
     Wallet,
     AlertOctagon,
+    Gauge,
 } from "lucide-react";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -30,6 +31,10 @@ function formatMoney(value: number): string {
         style: "currency",
         currency: "BRL",
     }).format(value);
+}
+
+function formatNum(n: number): string {
+    return n.toLocaleString("pt-BR");
 }
 
 // ─── KPI Card ───────────────────────────────────────────────────────────────
@@ -55,6 +60,78 @@ function KpiCard({ icon: Icon, label, value, detail, accent = "bg-muted" }: KpiC
                 <p className="font-display text-2xl font-bold tracking-tight text-foreground">{value}</p>
                 {detail && <p className="mt-0.5 text-[11px] text-muted-foreground">{detail}</p>}
             </div>
+        </div>
+    );
+}
+
+// ─── Usage Meter ─────────────────────────────────────────────────────────────
+
+interface UsageMeterProps {
+    icon: React.ComponentType<{ className?: string }>;
+    label: string;
+    current: number;
+    limit: number;
+}
+
+function UsageMeter({ icon: Icon, label, current, limit }: UsageMeterProps) {
+    const pct = limit > 0 ? Math.min((current / limit) * 100, 100) : 0;
+    const isOver = limit > 0 && current > limit;
+    const overCount = isOver ? current - limit : 0;
+
+    const barColor = isOver
+        ? "bg-red-500"
+        : pct >= 80
+            ? "bg-yellow-500"
+            : "bg-green-500";
+
+    const textColor = isOver
+        ? "text-red-400"
+        : pct >= 80
+            ? "text-yellow-400"
+            : "text-green-400";
+
+    if (limit === 0) {
+        return (
+            <div className="rounded-xl border border-border/50 bg-card p-4 shadow-soft">
+                <div className="flex items-center gap-2.5">
+                    <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-muted">
+                        <Icon className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/70">{label}</p>
+                        <p className="text-lg font-bold text-foreground">{formatNum(current)}</p>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-muted px-2.5 py-0.5 text-[10px] font-semibold text-muted-foreground uppercase">Ilimitado</span>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="rounded-xl border border-border/50 bg-card p-4 shadow-soft">
+            <div className="flex items-center gap-2.5">
+                <div className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${isOver ? "bg-red-500/20" : "bg-muted"}`}>
+                    <Icon className={`h-4 w-4 ${isOver ? "text-red-400" : "text-muted-foreground"}`} />
+                </div>
+                <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/70">{label}</p>
+                    <div className="flex items-baseline gap-1.5">
+                        <span className={`text-lg font-bold ${textColor}`}>{formatNum(current)}</span>
+                        <span className="text-xs text-muted-foreground">/ {formatNum(limit)}</span>
+                    </div>
+                </div>
+                <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase ${isOver ? "bg-red-500/20 text-red-400" : pct >= 80 ? "bg-yellow-500/20 text-yellow-400" : "bg-green-500/20 text-green-400"}`}>
+                    {isOver ? `+${formatNum(overCount)} acima` : `${Math.round(pct)}%`}
+                </span>
+            </div>
+            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted">
+                <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${pct}%` }} />
+            </div>
+            {isOver && (
+                <p className="mt-2 text-[11px] font-semibold text-red-400">
+                    ⚠️ Limite excedido em {formatNum(overCount)} {label.toLowerCase().includes("mensag") ? "mensagem(ns)" : "nota(s)"}
+                </p>
+            )}
         </div>
     );
 }
@@ -95,15 +172,28 @@ export function OwnerDashboard({ session, token }: OwnerDashboardProps) {
         <div className="space-y-8 enter-up">
             {/* Welcome header */}
             <div className="rounded-xl border border-border/40 bg-gradient-to-r from-primary/5 via-transparent to-primary/5 p-6 shadow-soft">
-                <h2 className="font-display text-xl font-bold text-foreground sm:text-2xl">
-                    Visão Geral da Operação
-                </h2>
-                <p className="mt-1 text-sm text-muted-foreground/80">
-                    Resumo de {new Date(summary.generatedAt).toLocaleString("pt-BR", {
-                        dateStyle: "full",
-                        timeStyle: "short",
-                    })}
-                </p>
+                <div className="flex items-center gap-3">
+                    <span className="text-2xl">
+                        {serviceType === "barber_booking" ? "📅" : serviceType === "nfe_import" ? "📄" : serviceType === "billing" ? "💰" : "📊"}
+                    </span>
+                    <div>
+                        <h2 className="font-display text-xl font-bold text-foreground sm:text-2xl">
+                            {serviceType === "barber_booking"
+                                ? "Visão Geral — Agendamentos"
+                                : serviceType === "nfe_import"
+                                    ? "Visão Geral — NF-e Import"
+                                    : serviceType === "billing"
+                                        ? "Visão Geral — Cobranças"
+                                        : "Visão Geral da Operação"}
+                        </h2>
+                        <p className="mt-0.5 text-sm text-muted-foreground/80">
+                            Resumo de {new Date(summary.generatedAt).toLocaleString("pt-BR", {
+                                dateStyle: "full",
+                                timeStyle: "short",
+                            })}
+                        </p>
+                    </div>
+                </div>
             </div>
 
             {/* KPI Grid */}
@@ -167,6 +257,33 @@ export function OwnerDashboard({ session, token }: OwnerDashboardProps) {
                 />
             </div>
 
+            {/* ─── Contadores de Uso ──────────────── */}
+            {summary.usage && (summary.usage.monthlyMessageLimit > 0 || summary.usage.monthlyNfseLimit > 0 || summary.usage.messagesThisMonth > 0 || summary.usage.nfseThisMonth > 0) && (
+                <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                        <Gauge className="h-4 w-4 text-muted-foreground" />
+                        <h3 className="text-sm font-semibold text-foreground">Uso Mensal</h3>
+                        <span className="ml-auto text-[11px] text-muted-foreground">
+                            Referencia: {new Date().toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}
+                        </span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <UsageMeter
+                            icon={MessageSquare}
+                            label="Mensagens enviadas"
+                            current={summary.usage.messagesThisMonth}
+                            limit={summary.usage.monthlyMessageLimit}
+                        />
+                        <UsageMeter
+                            icon={FileText}
+                            label="Notas de servico (NFS-e)"
+                            current={summary.usage.nfseThisMonth}
+                            limit={summary.usage.monthlyNfseLimit}
+                        />
+                    </div>
+                </div>
+            )}
+
             {/* Charts Row */}
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
                 {/* Messages over time */}
@@ -216,13 +333,25 @@ export function OwnerDashboard({ session, token }: OwnerDashboardProps) {
                     </ResponsiveContainer>
                 </div>
 
-                {/* Performance by service or billing */}
+                {/* Performance by service */}
                 <div className="rounded-xl border border-border/50 bg-card p-6 shadow-soft transition-all duration-300 hover:shadow-soft-lg">
                     <h3 className="mb-4 text-sm font-semibold text-foreground">
-                        {serviceType === "billing" ? "Cobranças por Status (Mês)" : "Agendamentos por Dia (7 dias)"}
+                        {serviceType === "billing"
+                            ? "Cobranças por Status (Mês)"
+                            : serviceType === "nfe_import"
+                                ? "NF-es por Dia (7 dias)"
+                                : "Agendamentos por Dia (7 dias)"}
                     </h3>
                     <ResponsiveContainer width="100%" height={220}>
-                        <BarChart data={serviceType === "billing" ? summary.billingByStatus : summary.appointmentsPerDay}>
+                        <BarChart
+                            data={
+                                serviceType === "billing"
+                                    ? summary.billingByStatus
+                                    : serviceType === "nfe_import"
+                                        ? summary.nfesPerDay
+                                        : summary.appointmentsPerDay
+                            }
+                        >
                             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                             <XAxis
                                 dataKey={serviceType === "billing" ? "status" : "day"}
@@ -240,6 +369,12 @@ export function OwnerDashboard({ session, token }: OwnerDashboardProps) {
                             <Legend />
                             {serviceType === "billing" ? (
                                 <Bar dataKey="count" name="Títulos" fill="#818cf8" radius={[4, 4, 0, 0]} />
+                            ) : serviceType === "nfe_import" ? (
+                                <>
+                                    <Bar dataKey="imported" name="Importadas" fill="#34d399" radius={[4, 4, 0, 0]} />
+                                    <Bar dataKey="detected" name="Detectadas" fill="#60a5fa" radius={[4, 4, 0, 0]} />
+                                    <Bar dataKey="failed" name="Com Falha" fill="#f87171" radius={[4, 4, 0, 0]} />
+                                </>
                             ) : (
                                 <>
                                     <Bar dataKey="scheduled" name="Agendados" fill="#60a5fa" radius={[4, 4, 0, 0]} />

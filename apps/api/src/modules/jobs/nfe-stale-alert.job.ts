@@ -13,8 +13,10 @@ const STALE_THRESHOLD_MS = 4 * 60 * 60 * 1000;
 // Intent usado no MessageDispatch para deduplicação (por empresa + dia)
 const ALERT_INTENT_PREFIX = "nfe_stale_alert";
 
+const JOB_TIMEZONE = "America/Sao_Paulo";
+
 function getTodayDateString(): string {
-  return new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: JOB_TIMEZONE }).format(new Date()); // "YYYY-MM-DD" no fuso correto
 }
 
 async function wasAlertSentToday(companyId: string): Promise<boolean> {

@@ -99,9 +99,12 @@ function buildHumanizedReminder(input: {
   const firstName = clientName.split(" ")[0];
   const greeting = getTimeGreeting();
 
-  const hoursText = startsAt.getHours();
-  const minutesText = startsAt.getMinutes().toString().padStart(2, "0");
-  const timeStr = `${hoursText}:${minutesText}`;
+  // Formatar no fuso de São Paulo para enviar horário correto ao cliente
+  const timeStr = startsAt.toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "America/Sao_Paulo",
+  });
 
   // Vocabulário e emojis por setor
   const emoji = sector === "car_wash" ? "🚗" : sector === "clinic" ? "🏥" : "💈";

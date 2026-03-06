@@ -177,6 +177,8 @@ export const api = {
       evolutionInstanceName?: string | null;
       aiType?: Exclude<ServiceType, null>;
       bookingSector?: "barber" | "clinic" | "car_wash" | "generic";
+      monthlyMessageLimit?: number;
+      monthlyNfseLimit?: number;
       active?: boolean;
     },
   ) {
@@ -214,6 +216,13 @@ export const api = {
   deleteCompanyNumber(token: string, companyId: string, numberId: string) {
     return request<void>(`/admin/companies/${companyId}/whatsapp-numbers/${numberId}`, {
       method: "DELETE",
+      token,
+    });
+  },
+
+  resetCompanyCooldown(token: string, companyId: string) {
+    return request<{ message: string }>(`/admin/companies/${companyId}/reset-cooldown`, {
+      method: "POST",
       token,
     });
   },
@@ -863,56 +872,8 @@ export const api = {
     });
   },
 
-  async getOwnerDashboard(_token: string): Promise<OwnerDashboardSummary> {
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    const now = new Date();
-    const days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(now);
-      d.setDate(d.getDate() - (6 - i));
-      return d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit" });
-    });
-    return {
-      generatedAt: now.toISOString(),
-      totals: {
-        pendingBillingAmount: 18750.0,
-        pendingBillingCount: 23,
-        overdueBillingAmount: 4320.5,
-        overdueBillingCount: 7,
-        appointmentsToday: 14,
-        appointmentsMonth: 187,
-        nfesImported: 56,
-        messagesOut: 132,
-        aiResponseRate: 87,
-      },
-      messagesPerDay: days.map((day) => ({
-        day,
-        in: Math.floor(Math.random() * 60) + 20,
-        out: Math.floor(Math.random() * 50) + 15,
-      })),
-      appointmentsPerDay: days.map((day) => ({
-        day,
-        scheduled: Math.floor(Math.random() * 20) + 5,
-        completed: Math.floor(Math.random() * 18) + 3,
-        canceled: Math.floor(Math.random() * 4),
-      })),
-      billingByStatus: [
-        { status: "A Vencer", count: 23 },
-        { status: "Vencidas", count: 7 },
-        { status: "Pagas", count: 150 },
-      ],
-      recentAlerts: [
-        {
-          type: "warning",
-          message: "7 cobranças vencidas há mais de 5 dias sem notificação.",
-          time: "18:02",
-        },
-        {
-          type: "info",
-          message: "56 NF-es importadas com sucesso no último ciclo de sincronização.",
-          time: "01:01",
-        },
-      ],
-    };
+  getOwnerDashboard(token: string) {
+    return request<OwnerDashboardSummary>("/company/owner-dashboard", { token });
   },
 
   // ─── NFS-e ────────────────────────────────────────────────────────────

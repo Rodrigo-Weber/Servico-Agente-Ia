@@ -224,5 +224,7 @@ function StatCard({
 }
 
 function FeedbackBox({ message }: { message: string }) {
-  return <div className="rounded-xl border border-green-500/25 bg-green-500/10 px-4 py-2 text-sm font-semibold text-green-400">{message}</div>;
+  const isError = /falha|erro|invalid|nao foi|nao consegui|expirad/i.test(message);
+  const borderClass = isError ? "border-red-500/25 bg-red-500/10 text-red-400" : "border-green-500/25 bg-green-500/10 text-green-400";
+  return <div className={`rounded-xl border px-4 py-2 text-sm font-semibold ${borderClass}`}>{message}</div>;
 }

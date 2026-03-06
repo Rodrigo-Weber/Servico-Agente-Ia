@@ -33,6 +33,8 @@ export interface Company {
   evolutionInstanceName: string | null;
   aiType: Exclude<ServiceType, null>;
   bookingSector?: "barber" | "clinic" | "car_wash" | "generic";
+  monthlyMessageLimit: number;
+  monthlyNfseLimit: number;
   active: boolean;
   createdAt: string;
   whatsappNumbers: Array<{
@@ -45,6 +47,10 @@ export interface Company {
     nfeDocuments: number;
     barberProfiles: number;
     appointments: number;
+  };
+  _usage?: {
+    messagesThisMonth: number;
+    nfseThisMonth: number;
   };
 }
 
@@ -195,6 +201,9 @@ export interface AdminMonitoringOverview {
     name: string;
     cnpj: string;
     active: boolean;
+    aiType: Exclude<ServiceType, null>;
+    bookingSector?: string;
+    evolutionInstanceName?: string | null;
     certificate: CompanyCertificateOverview;
     whatsappNumbers: {
       total: number;
@@ -220,6 +229,22 @@ export interface AdminMonitoringOverview {
       detected: number;
       failed: number;
       total: number;
+    };
+    appointments: {
+      scheduled: number;
+      completed: number;
+      canceled: number;
+      total: number;
+    };
+    billing: {
+      pending: number;
+      paid: number;
+      overdue: number;
+      total: number;
+    };
+    barbers: {
+      profiles: number;
+      services: number;
     };
   }>;
 }
@@ -391,8 +416,15 @@ export interface OwnerDashboardSummary {
     messagesOut: number;
     aiResponseRate: number;
   };
+  usage: {
+    messagesThisMonth: number;
+    monthlyMessageLimit: number;
+    nfseThisMonth: number;
+    monthlyNfseLimit: number;
+  };
   messagesPerDay: Array<{ day: string; in: number; out: number }>;
   appointmentsPerDay: Array<{ day: string; scheduled: number; completed: number; canceled: number }>;
+  nfesPerDay: Array<{ day: string; imported: number; detected: number; failed: number }>;
   billingByStatus: Array<{ status: string; count: number }>;
   recentAlerts: OwnerDashboardAlert[];
 }

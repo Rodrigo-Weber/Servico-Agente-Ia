@@ -43,7 +43,14 @@ export async function buildApp() {
     secret: env.JWT_ACCESS_SECRET,
   });
 
-  app.get("/health", async () => ({ status: "ok", ts: new Date().toISOString() }));
+  app.get("/health", async () => {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      return { status: "ok", ts: new Date().toISOString() };
+    } catch {
+      return { status: "degraded", ts: new Date().toISOString(), db: "unreachable" };
+    }
+  });
 
   await authRoutes(app);
   await adminRoutes(app);

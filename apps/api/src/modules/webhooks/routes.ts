@@ -1,5 +1,5 @@
 ﻿import { createHash } from "node:crypto";
-import { FastifyInstance } from "fastify";
+import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
@@ -11,6 +11,7 @@ import { appConfigService } from "../../services/app-config.service.js";
 import { generateBookingReceiptPdf } from "../barber/receipt-pdf.service.js";
 import { buildStoredMessageContent } from "../messages/message-content.js";
 import { outboundDispatchService } from "../messages/outbound-dispatch.service.js";
+import { env } from "../../config/env.js";
 
 interface IncomingData {
   phone: string;
@@ -5044,6 +5045,17 @@ async function sendAndLog(
 }
 
 export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
+  // Webhook auth guard: valida x-webhook-secret se WEBHOOK_SECRET estiver configurado
+  if (env.WEBHOOK_SECRET) {
+    app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
+      if (!request.url.startsWith("/webhooks/")) return;
+      const secret = request.headers["x-webhook-secret"];
+      if (secret !== env.WEBHOOK_SECRET) {
+        return reply.code(401).send({ ok: false, message: "Webhook secret invalido" });
+      }
+    });
+  }
+
   const handleMessagesWebhook = async (request: any, reply: any) => {
     const settings = await appConfigService.getSettings();
     const rawBody = request.body as Record<string, unknown>;
@@ -5632,7 +5644,8 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
       });
 
       try {
-        await sendAndLog(mappedCompanyId, replyPhone, `Nao consegui processar sua solicitacao: ${message}`, "ajuda", replyInstanceName);
+        console.error(`[webhook] Erro processando mensagem de ${replyPhone} (empresa ${mappedCompanyId}):`, message);
+        await sendAndLog(mappedCompanyId, replyPhone, "Desculpe, nao consegui processar sua solicitacao no momento. Tente novamente em alguns instantes.", "ajuda", replyInstanceName);
       } catch {
         // Evita erro em cascata se a sessao WhatsApp estiver indisponivel.
       }

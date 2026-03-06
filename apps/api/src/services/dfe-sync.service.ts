@@ -469,14 +469,38 @@ class DfeSyncService {
     const seenNsu = new Set<string>();
     let cUfIndex = 0;
 
+    const BATCH_PAUSE_MS = 3000; // 3 segundos entre cada batch para não sobrecarregar
+    const MAX_RETRIES = 2;
+
     try {
       for (let batch = 0; batch < settings.sefazMaxBatchesPerSync; batch += 1) {
+        // Pausa entre batches (não pausa antes do primeiro)
+        if (batch > 0) {
+          await new Promise((resolve) => setTimeout(resolve, BATCH_PAUSE_MS));
+        }
+
         let parsed: ParsedDistResponse | null = null;
+        let retryCount = 0;
 
         while (!parsed) {
           const currentCUF = cUfCandidates[cUfIndex]!;
           const distRequestXml = buildDistRequestXml(cnpj, currentNsu, currentCUF, settings);
-          const responseXml = await requestDistDfe(endpoint, distRequestXml, agent, settings.sefazTimeoutMs);
+
+          let responseXml: string;
+          try {
+            responseXml = await requestDistDfe(endpoint, distRequestXml, agent, settings.sefazTimeoutMs);
+          } catch (networkError) {
+            // Retry para erros de rede transientes
+            if (retryCount < MAX_RETRIES) {
+              retryCount += 1;
+              const waitMs = retryCount * 10000; // 10s, 20s
+              console.warn(`[dfe-sync] Erro de rede no batch ${batch}, tentativa ${retryCount}/${MAX_RETRIES}. Aguardando ${waitMs / 1000}s...`);
+              await new Promise((resolve) => setTimeout(resolve, waitMs));
+              continue;
+            }
+            throw networkError;
+          }
+
           const candidate = parseDistResponse(responseXml);
 
           if (candidate.cStat === "215" && cUfIndex < cUfCandidates.length - 1) {

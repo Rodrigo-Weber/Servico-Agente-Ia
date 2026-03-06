@@ -57,6 +57,7 @@ const envSchema = z.object({
   QUEUE_OUTBOUND_ENABLED: boolishSchema.default(false),
   RATE_LIMIT_ENABLED: boolishSchema.default(false),
   WEBHOOK_FAST_ACK_ENABLED: boolishSchema.default(false),
+  WEBHOOK_SECRET: z.string().optional().default(""),
   ENABLE_MESSAGE_WORKER: boolishSchema.default(false),
   ENABLE_EMBEDDED_WORKER: boolishSchema.default(false),
   SERVE_WEB_STATIC: boolishSchema.default(false),

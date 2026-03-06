@@ -109,6 +109,8 @@ model Company {
   aiType         CompanyAiType           @default(nfe_import)
   bookingSector  String                  @default("barber")
   templateId     String?
+  monthlyMessageLimit Int               @default(0)
+  monthlyNfseLimit    Int               @default(0)
   active         Boolean                 @default(true)
   createdAt      DateTime                @default(now())
   updatedAt      DateTime                @updatedAt
@@ -383,6 +385,8 @@ model NfeItem {
   qtd        Decimal     @db.Decimal(15, 4)
   vUnit      Decimal     @db.Decimal(15, 4)
   vTotal     Decimal     @db.Decimal(15, 2)
+
+  @@index([nfeId])
 }
 
 model DfeSyncState {
@@ -410,6 +414,7 @@ model MessageLog {
   createdAt  DateTime                @default(now())
 
   @@index([companyId, createdAt])
+  @@index([companyId, phoneE164, createdAt])
 }
 
 model ConversationMemory {

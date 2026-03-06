@@ -607,45 +607,145 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
           </Button>
         </div>
 
-        <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+        {/* Detalhe da nota selecionada — tela inteira */}
+        {selectedNfe ? (
           <Card>
             <CardHeader>
-              <CardTitle>Lista de notas</CardTitle>
-              <CardDescription>Selecione uma nota para abrir o detalhe completo.</CardDescription>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <CardTitle>Detalhes da nota</CardTitle>
+                  <CardDescription>{selectedNfe.emitenteNome || "Emitente nao identificado"}</CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => void handleDownloadNfeXml()} disabled={downloadingXml}>
+                    <Download className="mr-1.5 h-4 w-4" />
+                    {downloadingXml ? "Baixando..." : "Baixar XML"}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setSelectedNfe(null)}>
+                    <ChevronLeft className="mr-1 h-4 w-4" />
+                    Voltar
+                  </Button>
+                </div>
+              </div>
             </CardHeader>
-            <CardContent className="space-y-2">
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 rounded-xl border border-border/50 bg-muted/30 p-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Chave</p>
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <p className="break-all font-mono text-xs font-semibold">{formatNfeKey(selectedNfe.chave)}</p>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyKey(selectedNfe.chave)}
+                      className="shrink-0 rounded p-1 transition hover:bg-accent"
+                      title="Copiar chave"
+                    >
+                      <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+                    </button>
+                  </div>
+                </div>
+                <InfoField label="Status" value={getNfeStatusLabel(selectedNfe.status)} />
+                <InfoField label="Emitente" value={selectedNfe.emitenteNome || "-"} />
+                <InfoField label="CNPJ" value={selectedNfe.emitenteCnpj || "-"} />
+                <InfoField label="Valor total" value={formatMoney(selectedNfe.valorTotal)} />
+                <InfoField label="Data emissao" value={formatDate(selectedNfe.dataEmissao)} />
+                <InfoField label="Data vencimento" value={formatDueDate(selectedNfe.dataVencimento)} />
+                <InfoField label="Prazo" value={getDueDaysLabel(selectedNfe.dataVencimento)} />
+              </div>
+
+              <div>
+                <p className="mb-2 text-sm font-semibold">Itens da nota</p>
+                <div className="overflow-x-auto rounded-xl border border-border">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-muted/70 text-xs uppercase tracking-wide text-muted-foreground">
+                      <tr>
+                        <th className="px-3 py-2">Codigo</th>
+                        <th className="px-3 py-2">Descricao</th>
+                        <th className="px-3 py-2 text-right">Qtd</th>
+                        <th className="px-3 py-2 text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border bg-muted/50">
+                      {(selectedNfe.items || []).length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="px-3 py-4 text-center text-sm text-muted-foreground">Nenhum item nesta nota.</td>
+                        </tr>
+                      ) : null}
+                      {(selectedNfe.items || []).map((item) => (
+                        <tr key={item.id}>
+                          <td className="px-3 py-2 text-xs">{item.codigo || "-"}</td>
+                          <td className="px-3 py-2">{item.descricao || "-"}</td>
+                          <td className="px-3 py-2 text-right">{item.qtd}</td>
+                          <td className="px-3 py-2 text-right">{formatMoney(item.vTotal)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {/* Lista de notas — tabela tela inteira */}
+        {!selectedNfe ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Notas fiscais</CardTitle>
+              <CardDescription>Clique em uma nota para visualizar os detalhes completos.</CardDescription>
+            </CardHeader>
+            <CardContent>
               {paginatedNfes.length === 0 ? (
                 <EmptyState
                   icon={FileText}
                   title={nfeSearch || nfeStatusFilter !== "all" ? "Nenhuma nota encontrada" : "Sem notas processadas"}
-                  description={nfeSearch || nfeStatusFilter !== "all" ? "Tente ajustar os filtros de busca." : "As notas aparecerÀo aqui quando forem detectadas ou importadas."}
+                  description={nfeSearch || nfeStatusFilter !== "all" ? "Tente ajustar os filtros de busca." : "As notas aparecerão aqui quando forem detectadas ou importadas."}
                 />
-              ) : null}
-              {paginatedNfes.map((nfe) => (
-                <button
-                  key={nfe.id}
-                  onClick={() => void handleOpenNfe(nfe.id)}
-                  className="w-full rounded-xl border border-border/50 bg-muted/30 px-3 py-2 text-left transition hover:bg-muted/50"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate font-mono text-xs text-muted-foreground">{formatNfeKey(nfe.chave)}</p>
-                      <p className="text-sm font-semibold">{nfe.emitenteNome || "Emitente nao identificado"}</p>
-                      <p className="text-xs text-muted-foreground">
-                        Vencimento: {formatDueDate(nfe.dataVencimento)} | {getDueDaysLabel(nfe.dataVencimento)}
-                      </p>
-                    </div>
-                    <Badge variant={getStatusVariant(nfe.status)}>{getNfeStatusLabel(nfe.status)}</Badge>
-                  </div>
-                  <p className="mt-1 text-sm font-semibold text-green-400">{formatMoney(nfe.valorTotal)}</p>
-                </button>
-              ))}
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-left">
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Emitente</th>
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Chave</th>
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Valor</th>
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Vencimento</th>
+                        <th className="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</th>
+                        <th className="pb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Prazo</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/50">
+                      {paginatedNfes.map((nfe) => (
+                        <tr
+                          key={nfe.id}
+                          className="cursor-pointer transition-colors hover:bg-muted/40"
+                          onClick={() => void handleOpenNfe(nfe.id)}
+                        >
+                          <td className="py-2.5 pr-4">
+                            <p className="font-semibold">{nfe.emitenteNome || "Nao identificado"}</p>
+                            <p className="text-xs text-muted-foreground">{nfe.emitenteCnpj || "-"}</p>
+                          </td>
+                          <td className="py-2.5 pr-4">
+                            <p className="font-mono text-xs text-muted-foreground truncate max-w-[200px]">{formatNfeKey(nfe.chave)}</p>
+                          </td>
+                          <td className="py-2.5 pr-4 font-semibold text-green-400">{formatMoney(nfe.valorTotal)}</td>
+                          <td className="py-2.5 pr-4 text-xs text-muted-foreground">{formatDueDate(nfe.dataVencimento)}</td>
+                          <td className="py-2.5 pr-4">
+                            <Badge variant={getStatusVariant(nfe.status)}>{getNfeStatusLabel(nfe.status)}</Badge>
+                          </td>
+                          <td className="py-2.5 text-xs text-muted-foreground">{getDueDaysLabel(nfe.dataVencimento)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
-              {/* PaginaçÀo */}
+              {/* Paginacao */}
               {filteredNfes.length > NFE_PAGE_SIZE ? (
-                <div className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/30 px-3 py-2">
+                <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
                   <p className="text-xs text-muted-foreground">
-                    Página {nfePage} de {nfeTotalPages}
+                    Pagina {nfePage} de {nfeTotalPages}
                   </p>
                   <div className="flex gap-1.5">
                     <Button
@@ -669,88 +769,7 @@ export function CompanyPanel({ token, activeView }: CompanyPanelProps) {
               ) : null}
             </CardContent>
           </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Detalhes da nota</CardTitle>
-              <CardDescription>Visualize emitente, valor e itens importados.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {!selectedNfe ? (
-                <EmptyState
-                  icon={ArrowRight}
-                  title="Selecione uma nota"
-                  description="Clique em uma nota na lista ao lado para visualizar os detalhes completos."
-                  className="min-h-[220px]"
-                />
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-end">
-                    <Button type="button" variant="outline" size="sm" onClick={() => void handleDownloadNfeXml()} disabled={downloadingXml}>
-                      <Download className="mr-1.5 h-4 w-4" />
-                      {downloadingXml ? "Baixando XML..." : "Baixar XML"}
-                    </Button>
-                  </div>
-
-                  <div className="grid gap-3 rounded-xl border border-border/50 bg-muted/30 p-3 text-sm md:grid-cols-2">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Chave</p>
-                      <div className="mt-1 flex items-center gap-1.5">
-                        <p className="break-all font-mono text-xs font-semibold">{formatNfeKey(selectedNfe.chave)}</p>
-                        <button
-                          type="button"
-                          onClick={() => handleCopyKey(selectedNfe.chave)}
-                          className="shrink-0 rounded p-1 transition hover:bg-accent"
-                          title="Copiar chave"
-                        >
-                          <Copy className="h-3.5 w-3.5 text-muted-foreground" />
-                        </button>
-                      </div>
-                    </div>
-                    <InfoField label="Status" value={getNfeStatusLabel(selectedNfe.status)} />
-                    <InfoField label="Emitente" value={selectedNfe.emitenteNome || "-"} />
-                    <InfoField label="CNPJ" value={selectedNfe.emitenteCnpj || "-"} />
-                    <InfoField label="Valor total" value={formatMoney(selectedNfe.valorTotal)} />
-                    <InfoField label="Data emissao" value={formatDate(selectedNfe.dataEmissao)} />
-                    <InfoField label="Data vencimento" value={formatDueDate(selectedNfe.dataVencimento)} />
-                    <InfoField label="Prazo" value={getDueDaysLabel(selectedNfe.dataVencimento)} />
-                  </div>
-
-                  <div>
-                    <p className="mb-2 text-sm font-semibold">Itens da nota</p>
-                    <div className="overflow-hidden rounded-xl border border-border">
-                      <table className="w-full text-left text-sm">
-                        <thead className="bg-muted/70 text-xs uppercase tracking-wide text-muted-foreground">
-                          <tr>
-                            <th className="px-3 py-2">Codigo</th>
-                            <th className="px-3 py-2">Descricao</th>
-                            <th className="px-3 py-2 text-right">Qtd</th>
-                            <th className="px-3 py-2 text-right">Total</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border bg-muted/50">
-                          {(selectedNfe.items || []).length === 0 ? (
-                            <tr>
-                              <td colSpan={4} className="px-3 py-4 text-center text-sm text-muted-foreground">Nenhum item nesta nota.</td>
-                            </tr>
-                          ) : null}
-                          {(selectedNfe.items || []).map((item) => (
-                            <tr key={item.id}>
-                              <td className="px-3 py-2 text-xs">{item.codigo || "-"}</td>
-                              <td className="px-3 py-2">{item.descricao || "-"}</td>
-                              <td className="px-3 py-2 text-right">{item.qtd}</td>
-                              <td className="px-3 py-2 text-right">{formatMoney(item.vTotal)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+        ) : null}
 
         {feedback ? <FeedbackBox message={feedback} /> : null}
       </div>
@@ -839,5 +858,7 @@ function InfoField({ label, value }: { label: string; value: string }) {
 }
 
 function FeedbackBox({ message }: { message: string }) {
-  return <div className="rounded-xl border border-green-500/25 bg-green-500/10 px-4 py-2 text-sm font-semibold text-green-400">{message}</div>;
+  const isError = /falha|erro|invalid|nao foi|nao consegui|expirad/i.test(message);
+  const borderClass = isError ? "border-red-500/25 bg-red-500/10 text-red-400" : "border-green-500/25 bg-green-500/10 text-green-400";
+  return <div className={`rounded-xl border px-4 py-2 text-sm font-semibold ${borderClass}`}>{message}</div>;
 }

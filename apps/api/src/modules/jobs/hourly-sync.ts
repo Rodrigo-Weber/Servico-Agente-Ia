@@ -7,8 +7,9 @@ import { appConfigService } from "../../services/app-config.service.js";
 import { outboundDispatchService } from "../messages/outbound-dispatch.service.js";
 
 const MAX_SYNC_STATUS_LENGTH = 180;
-const BASE_656_COOLDOWN_MS = 61 * 60 * 1000;
-const MAX_656_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const BASE_656_COOLDOWN_MS = 5 * 60 * 1000;
+const MAX_656_COOLDOWN_MS = 60 * 60 * 1000;
+const INTER_COMPANY_PAUSE_MS = 60 * 1000; // 1 minuto de pausa entre cada empresa
 const DAILY_DIGEST_TIMEZONE = "America/Sao_Paulo";
 const OUTBOUND_TEXT_MAX_CHARS = 2800;
 
@@ -27,16 +28,17 @@ function normalizeSyncStatus(value: string): string {
 }
 
 function resolveSefaz656CooldownUntil(now: Date, previousStatus: string | null | undefined): Date {
-  const baseUntil = new Date(now.getTime() + BASE_656_COOLDOWN_MS);
   const previousCooldown = parseCooldownUntil(previousStatus);
 
   if (!previousCooldown || previousCooldown.getTime() <= now.getTime()) {
-    return baseUntil;
+    return new Date(now.getTime() + BASE_656_COOLDOWN_MS);
   }
 
-  const extended = new Date(previousCooldown.getTime() + BASE_656_COOLDOWN_MS);
+  const previousDurationMs = previousCooldown.getTime() - (now.getTime() - BASE_656_COOLDOWN_MS);
+  const nextDurationMs = Math.min(Math.max(previousDurationMs, BASE_656_COOLDOWN_MS) * 2, MAX_656_COOLDOWN_MS);
+  const cooldownUntil = new Date(now.getTime() + nextDurationMs);
   const maxUntil = new Date(now.getTime() + MAX_656_COOLDOWN_MS);
-  return extended.getTime() > maxUntil.getTime() ? maxUntil : extended;
+  return cooldownUntil.getTime() > maxUntil.getTime() ? maxUntil : cooldownUntil;
 }
 
 function formatCurrencyBr(value: number): string {
@@ -205,7 +207,17 @@ export async function runHourlyNfeSync(): Promise<void> {
     },
   });
 
-  for (const company of companies) {
+  console.log(`[hourly-sync] Iniciando sync para ${companies.length} empresa(s) com pausa de ${INTER_COMPANY_PAUSE_MS / 1000}s entre cada.`);
+
+  for (let companyIndex = 0; companyIndex < companies.length; companyIndex += 1) {
+    const company = companies[companyIndex]!;
+
+    // Pausa de 1 minuto entre empresas (não pausa antes da primeira)
+    if (companyIndex > 0) {
+      console.log(`[hourly-sync] Aguardando ${INTER_COMPANY_PAUSE_MS / 1000}s antes de processar ${company.name || company.id}...`);
+      await new Promise((resolve) => setTimeout(resolve, INTER_COMPANY_PAUSE_MS));
+    }
+
     const syncBlocked = isSyncBlocked({
       minIntervalSeconds: settings.syncMinIntervalSeconds,
       lastSuccessAt: company.dfeSyncState?.ultimoSucessoAt,
@@ -214,8 +226,11 @@ export async function runHourlyNfeSync(): Promise<void> {
     });
 
     if (syncBlocked) {
+      console.log(`[hourly-sync] Empresa ${company.name || company.id} bloqueada (intervalo minimo ou cooldown). Pulando.`);
       continue;
     }
+
+    console.log(`[hourly-sync] Processando empresa ${company.name || company.id} (${companyIndex + 1}/${companies.length})...`);
 
     const job = await prisma.jobRun.create({
       data: {
@@ -268,6 +283,8 @@ export async function runHourlyNfeSync(): Promise<void> {
           error: failedDocuments > 0 ? `Falha ao importar ${failedDocuments} documento(s) do lote.` : null,
         },
       });
+
+      console.log(`[hourly-sync] Empresa ${company.name || company.id} concluida: ${sync.documents.length} doc(s), ${failedDocuments} falha(s).`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro desconhecido";
       const now = new Date();
@@ -301,7 +318,7 @@ export async function runHourlyNfeSync(): Promise<void> {
         });
 
         console.warn(
-          `[hourly-sync] Empresa ${company.id} em cooldown SEFAZ 656 ate ${cooldownUntil.toISOString()} (backoff automatico).`,
+          `[hourly-sync] Empresa ${company.id} em cooldown SEFAZ 656 por ${Math.round((cooldownUntil.getTime() - now.getTime()) / 60000)}min ate ${cooldownUntil.toISOString()}.`,
         );
 
         continue;

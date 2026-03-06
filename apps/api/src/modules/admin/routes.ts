@@ -29,6 +29,8 @@ const updateCompanySchema = z.object({
   evolutionInstanceName: z.string().trim().min(1).nullable().optional(),
   aiType: z.nativeEnum(CompanyAiType).optional(),
   bookingSector: z.enum(["barber", "clinic", "car_wash", "generic"]).optional(),
+  monthlyMessageLimit: z.number().int().min(0).optional(),
+  monthlyNfseLimit: z.number().int().min(0).optional(),
   active: z.boolean().optional(),
 });
 
@@ -398,7 +400,32 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
           },
         });
 
-        return companies;
+        // Contagem mensal de uso por empresa
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+        const [msgCounts, nfseCounts] = await Promise.all([
+          prisma.messageLog.groupBy({
+            by: ["companyId"],
+            where: { direction: "out", createdAt: { gte: monthStart } },
+            _count: { _all: true },
+          }),
+          prisma.$queryRawUnsafe<Array<{ companyId: string; cnt: bigint }>>(
+            `SELECT companyId, COUNT(*) as cnt FROM NfseServiceDocument WHERE createdAt >= ? GROUP BY companyId`,
+            monthStart,
+          ).catch(() => [] as Array<{ companyId: string; cnt: bigint }>),
+        ]);
+
+        const msgMap = new Map(msgCounts.map((r) => [r.companyId, r._count._all]));
+        const nfseMap = new Map(nfseCounts.map((r) => [r.companyId, Number(r.cnt)]));
+
+        return companies.map((c) => ({
+          ...c,
+          _usage: {
+            messagesThisMonth: msgMap.get(c.id) ?? 0,
+            nfseThisMonth: nfseMap.get(c.id) ?? 0,
+          },
+        }));
       });
 
       adminApp.patch("/companies/:id", async (request, reply) => {
@@ -467,6 +494,8 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
               evolutionInstanceName: companyAiTypeRequiresDedicatedInstance(nextAiType) ? nextInstanceName : null,
               aiType: data.aiType,
               bookingSector: data.bookingSector,
+              monthlyMessageLimit: data.monthlyMessageLimit,
+              monthlyNfseLimit: data.monthlyNfseLimit,
               active: data.active,
             },
           });
@@ -745,7 +774,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
         const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
         const settings = await appConfigService.getSettings();
 
-        const [companies, nfeByCompanyStatus, jobs24ByStatus, recentJobs, recentJobsTotal, message24ByDirection, failedMessages24, session] =
+        const [companies, nfeByCompanyStatus, jobs24ByStatus, recentJobs, recentJobsTotal, message24ByDirection, failedMessages24, session, appointmentsByCompany, billingByCompany, barberProfilesByCompany, barberServicesByCompany] =
           await Promise.all([
             prisma.company.findMany({
               orderBy: { createdAt: "desc" },
@@ -754,6 +783,9 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
                 name: true,
                 cnpj: true,
                 active: true,
+                aiType: true,
+                bookingSector: true,
+                evolutionInstanceName: true,
                 createdAt: true,
                 whatsappNumbers: {
                   select: {
@@ -841,6 +873,24 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
                 updatedAt: true,
               },
             }),
+            prisma.barberAppointment.groupBy({
+              by: ["companyId", "status"],
+              _count: { _all: true },
+            }),
+            prisma.billingDocument.groupBy({
+              by: ["companyId", "status"],
+              _count: { _all: true },
+            }),
+            prisma.barberProfile.groupBy({
+              by: ["companyId"],
+              where: { active: true },
+              _count: { _all: true },
+            }),
+            prisma.barberService.groupBy({
+              by: ["companyId"],
+              where: { active: true },
+              _count: { _all: true },
+            }),
           ]);
 
         const companyIds = companies.map((company) => company.id);
@@ -879,6 +929,28 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
           lastJobByCompany.set(job.companyId, job);
         }
+
+        const appointmentsByCoMap = appointmentsByCompany.reduce<Record<string, Record<string, number>>>((acc, item) => {
+          if (!acc[item.companyId]) acc[item.companyId] = {};
+          acc[item.companyId][item.status] = item._count._all;
+          return acc;
+        }, {});
+
+        const billingByCoMap = billingByCompany.reduce<Record<string, Record<string, number>>>((acc, item) => {
+          if (!acc[item.companyId]) acc[item.companyId] = {};
+          acc[item.companyId][item.status] = item._count._all;
+          return acc;
+        }, {});
+
+        const barberProfilesMap = barberProfilesByCompany.reduce<Record<string, number>>((acc, item) => {
+          acc[item.companyId] = item._count._all;
+          return acc;
+        }, {});
+
+        const barberServicesMap = barberServicesByCompany.reduce<Record<string, number>>((acc, item) => {
+          acc[item.companyId] = item._count._all;
+          return acc;
+        }, {});
 
         const nfeByCompany = nfeByCompanyStatus.reduce<Record<string, Record<string, number>>>((acc, item) => {
           if (!acc[item.companyId]) {
@@ -933,11 +1005,17 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
           if (certificateStatus === "expired") certificateTotals.expired += 1;
           if (certificateStatus === "unknown") certificateTotals.unknown += 1;
 
+          const appointmentCounts = appointmentsByCoMap[company.id] ?? {};
+          const billingCounts = billingByCoMap[company.id] ?? {};
+
           return {
             companyId: company.id,
             name: company.name,
             cnpj: company.cnpj,
             active: company.active,
+            aiType: company.aiType,
+            bookingSector: company.bookingSector,
+            evolutionInstanceName: company.evolutionInstanceName,
             certificate: {
               id: certificate?.id ?? null,
               status: certificateStatus,
@@ -964,6 +1042,22 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
               detected: nfeCounts.detected ?? 0,
               failed: nfeCounts.failed ?? 0,
               total: (nfeCounts.imported ?? 0) + (nfeCounts.detected ?? 0) + (nfeCounts.failed ?? 0),
+            },
+            appointments: {
+              scheduled: appointmentCounts.scheduled ?? 0,
+              completed: appointmentCounts.completed ?? 0,
+              canceled: appointmentCounts.canceled ?? 0,
+              total: (appointmentCounts.scheduled ?? 0) + (appointmentCounts.completed ?? 0) + (appointmentCounts.canceled ?? 0),
+            },
+            billing: {
+              pending: billingCounts.pending ?? 0,
+              paid: billingCounts.paid ?? 0,
+              overdue: billingCounts.overdue ?? 0,
+              total: (billingCounts.pending ?? 0) + (billingCounts.paid ?? 0) + (billingCounts.overdue ?? 0),
+            },
+            barbers: {
+              profiles: barberProfilesMap[company.id] ?? 0,
+              services: barberServicesMap[company.id] ?? 0,
             },
           };
         });
@@ -1001,6 +1095,25 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
           },
           companyHealth,
         };
+      });
+
+      adminApp.post("/companies/:id/reset-cooldown", async (request, reply) => {
+        const params = z.object({ id: z.string().min(1) }).safeParse(request.params);
+        if (!params.success) {
+          return reply.code(400).send({ message: "ID invalido" });
+        }
+
+        const state = await prisma.dfeSyncState.findUnique({ where: { companyId: params.data.id } });
+        if (!state) {
+          return reply.code(404).send({ message: "Estado de sync nao encontrado" });
+        }
+
+        await prisma.dfeSyncState.update({
+          where: { companyId: params.data.id },
+          data: { ultimoStatus: "cooldown_reset_manual" },
+        });
+
+        return { message: "Cooldown resetado com sucesso" };
       });
 
       adminApp.get("/monitoring/queues", async () => {
