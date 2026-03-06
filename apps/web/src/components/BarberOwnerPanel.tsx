@@ -346,7 +346,20 @@ function statusVariant(status: BarberAppointment["status"]): "default" | "second
   return "destructive";
 }
 
+function useIsMobile(breakpoint = 768): boolean {
+  const [mobile, setMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < breakpoint);
+  useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
+    const handler = (e: MediaQueryListEvent) => setMobile(e.matches);
+    setMobile(mql.matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, [breakpoint]);
+  return mobile;
+}
+
 export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
+  const isMobile = useIsMobile();
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState("");
   const [companyName, setCompanyName] = useState("Empresa");
@@ -946,7 +959,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
   if (activeView === "barbers") {
     return (
       <div className="space-y-6">
-        <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+        <div className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
           <Card>
             <CardHeader>
               <CardTitle>Novo(a) {labelResource.toLowerCase()}</CardTitle>
@@ -1110,7 +1123,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
   if (activeView === "services") {
     return (
       <div className="space-y-6">
-        <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+        <div className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
           <Card>
             <CardHeader>
               <CardTitle>Novo servico</CardTitle>
@@ -1354,10 +1367,97 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+            {/* ── Mobile: detail panel first, then compact list ── */}
+            {isMobile ? (
+              <div className="space-y-3">
+                {selectedDayAppointment ? (
+                  <div className="rounded-xl border border-border/50 bg-muted/30 p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Detalhes</p>
+                        <h4 className="text-base font-bold">{selectedDayAppointment.clientName}</h4>
+                      </div>
+                      <Badge variant={statusVariant(selectedDayAppointment.status)}>
+                        {formatAppointmentStatus(selectedDayAppointment.status)}
+                      </Badge>
+                    </div>
+                    <div className="mt-3 space-y-2 text-sm">
+                      <p className="flex items-center gap-2 text-muted-foreground">
+                        <CalendarClock className="h-4 w-4" />
+                        <span className="font-semibold text-foreground">{formatTimeRange(selectedDayAppointment)}</span>
+                      </p>
+                      <p><span className="text-muted-foreground">Telefone:</span> {selectedDayAppointment.clientPhone}</p>
+                      <p><span className="text-muted-foreground">Servico:</span> {selectedDayAppointment.service?.name || "-"}</p>
+                      <p><span className="text-muted-foreground">{labelResource}:</span> {selectedDayAppointment.barber?.name || "-"}</p>
+                    </div>
+                    {selectedDayAppointment.status === "scheduled" ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Button type="button" size="sm" variant="outline" className="flex-1" onClick={() => void setAppointmentStatus(selectedDayAppointment.id, "completed")}>
+                          <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Concluir
+                        </Button>
+                        <Button type="button" size="sm" variant="destructive" className="flex-1" onClick={() => void setAppointmentStatus(selectedDayAppointment.id, "canceled")}>
+                          Cancelar
+                        </Button>
+                      </div>
+                    ) : null}
+                    <div className="mt-2">
+                      <Button type="button" size="sm" variant="destructive" className="w-full" onClick={() => void deleteAppointmentPermanently(selectedDayAppointment.id)}>
+                        <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Excluir
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {loadingDayAppointments ? (
+                  <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-background/50 px-3 py-6 text-sm text-muted-foreground">
+                    <RefreshCw className="h-4 w-4 animate-spin" /> Atualizando agenda...
+                  </div>
+                ) : filteredDayAppointments.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-border/50 bg-muted/30 px-4 py-6 text-center text-sm text-muted-foreground">
+                    Nenhum agendamento para este dia.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {filteredDayAppointments.map((appointment) => {
+                      const toneClass =
+                        appointment.status === "completed"
+                          ? "border-emerald-500/30 bg-emerald-500/5"
+                          : appointment.status === "canceled"
+                            ? "border-rose-500/30 bg-rose-500/5"
+                            : "border-primary/30 bg-primary/5";
+                      const isSelected = appointment.id === selectedAppointmentId;
+                      return (
+                        <button
+                          key={appointment.id}
+                          type="button"
+                          onClick={() => setSelectedAppointmentId(appointment.id)}
+                          className={cn(
+                            "w-full rounded-xl border px-3 py-3 text-left transition",
+                            toneClass,
+                            isSelected ? "ring-2 ring-primary/40 shadow-sm" : "hover:shadow-sm",
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-semibold">{appointment.clientName}</p>
+                            <Badge variant={statusVariant(appointment.status)} className="text-[10px] px-1.5 py-0.5">
+                              {formatAppointmentStatus(appointment.status)}
+                            </Badge>
+                          </div>
+                          <p className="mt-0.5 text-xs font-medium text-muted-foreground">
+                            {formatTimeRange(appointment)} · {appointment.service?.name || "-"} · {appointment.barber?.name || "-"}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : (
+            /* ── Desktop: timeline + sidebar ── */
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
               <div className="rounded-xl border border-border/50 bg-muted/30 p-3">
-                <div className="relative min-h-[620px] overflow-x-auto">
-                  <div className="relative min-w-[340px] sm:min-w-[480px] md:min-w-full" style={{ height: `${DAY_TIMELINE_HEIGHT}px` }}>
+                <div className="relative overflow-x-auto" style={{ minHeight: Math.min(DAY_TIMELINE_HEIGHT, 620) }}>
+                  <div className="relative" style={{ height: `${DAY_TIMELINE_HEIGHT}px`, minWidth: 480 }}>
                     {timelineHours.map((hour, index) => (
                       <div key={hour} className="absolute left-0 right-0 border-t border-border" style={{ top: `${index * HOUR_ROW_HEIGHT}px` }}>
                         <span className="absolute left-1 top-0 -translate-y-1/2 rounded bg-background px-1 text-[11px] font-semibold text-muted-foreground">
@@ -1629,6 +1729,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
                 ) : null}
               </div>
             </div>
+            )}
           </CardContent>
         </Card>
 
@@ -1644,7 +1745,7 @@ export function BarberOwnerPanel({ token, activeView }: BarberOwnerPanelProps) {
   if (activeView === "settings") {
     return (
       <div className="space-y-6">
-        <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+        <div className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
           <Card>
             <CardHeader>
               <CardTitle>WhatsApp da empresa</CardTitle>

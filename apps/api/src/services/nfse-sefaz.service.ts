@@ -121,14 +121,19 @@ export class SefazNfseService {
       );
     }
 
-    if (cert.validTo && cert.validTo < new Date()) {
+    let pfxBuffer: Buffer;
+    let pfxPassword: string;
+    try {
+      pfxBuffer = decryptBuffer(Buffer.from(cert.pfxBlobEncrypted));
+      pfxPassword = decryptText(Buffer.from(cert.pfxPasswordEncrypted));
+    } catch (cryptoError) {
+      const detail = cryptoError instanceof Error ? cryptoError.message : String(cryptoError);
       throw new Error(
-        "Certificado A1 expirado. Por favor, faça upload de um novo certificado válido."
+        `Falha ao descriptografar certificado. ` +
+        `Verifique se APP_ENCRYPTION_KEY e a mesma usada quando o certificado foi salvo, ` +
+        `ou faca o re-upload do certificado. Detalhe: ${detail}`,
       );
     }
-
-    const pfxBuffer = decryptBuffer(Buffer.from(cert.pfxBlobEncrypted));
-    const pfxPassword = decryptText(Buffer.from(cert.pfxPasswordEncrypted));
     const { certPem, keyPem, certBase64 } = this.extractPemFromPfx(pfxBuffer, pfxPassword);
 
     return { pfxBuffer, pfxPassword, certPem, keyPem, certBase64 };

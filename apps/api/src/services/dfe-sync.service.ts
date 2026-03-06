@@ -448,8 +448,21 @@ class DfeSyncService {
 
     const cnpj = normalizeCnpj(company.cnpj);
     const endpoint = resolveDistEndpoint(settings);
-    const pfxBuffer = decryptBuffer(Buffer.from(certificate.pfxBlobEncrypted));
-    const pfxPassword = decryptText(Buffer.from(certificate.pfxPasswordEncrypted));
+
+    let pfxBuffer: Buffer;
+    let pfxPassword: string;
+    try {
+      pfxBuffer = decryptBuffer(Buffer.from(certificate.pfxBlobEncrypted));
+      pfxPassword = decryptText(Buffer.from(certificate.pfxPasswordEncrypted));
+    } catch (cryptoError) {
+      const detail = cryptoError instanceof Error ? cryptoError.message : String(cryptoError);
+      throw new Error(
+        `Falha ao descriptografar certificado da empresa ${companyId}. ` +
+        `Verifique se APP_ENCRYPTION_KEY e a mesma usada quando o certificado foi salvo, ` +
+        `ou faca o re-upload do certificado. Detalhe: ${detail}`,
+      );
+    }
+
     const cUfCandidates = resolveCUFAutorCandidates(pfxBuffer, pfxPassword, settings);
 
     if (cUfCandidates.length === 0) {

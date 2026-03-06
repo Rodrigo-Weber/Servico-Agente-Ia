@@ -7,6 +7,8 @@ import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import jwt from "@fastify/jwt";
+import helmet from "@fastify/helmet";
+import rateLimit from "@fastify/rate-limit";
 import { env } from "./config/env.js";
 import { authRoutes } from "./modules/auth/routes.js";
 import { adminRoutes } from "./modules/admin/routes.js";
@@ -24,6 +26,20 @@ export async function buildApp() {
       level: env.LOG_LEVEL,
     },
     disableRequestLogging: !env.LOG_REQUESTS,
+  });
+
+  // ── Security Headers ──
+  await app.register(helmet, {
+    contentSecurityPolicy: false, // CSP desabilitado para não bloquear o frontend SPA
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    crossOriginEmbedderPolicy: false,
+  });
+
+  // ── Global Rate Limit ──
+  await app.register(rateLimit, {
+    max: 200,
+    timeWindow: "1 minute",
+    allowList: ["127.0.0.1", "::1"],
   });
 
   await app.register(cors, {
@@ -96,9 +112,18 @@ export async function buildApp() {
       return;
     }
 
+    // Rate limit errors
+    if (error && typeof error === "object" && "statusCode" in error && (error as { statusCode: number }).statusCode === 429) {
+      return reply.code(429).send({
+        message: "Muitas requisicoes, tente novamente em instantes.",
+      });
+    }
+
     reply.code(500).send({
       message: "Erro interno",
-      error: env.NODE_ENV === "production" ? undefined : error instanceof Error ? error.message : "Erro desconhecido",
+      ...(env.NODE_ENV !== "production" && error instanceof Error
+        ? { error: error.message }
+        : {}),
     });
   });
 

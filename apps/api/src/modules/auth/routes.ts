@@ -14,8 +14,18 @@ const refreshSchema = z.object({
   refreshToken: z.string().min(10),
 });
 
+// Rate limit agressivo para rotas de autenticação
+const AUTH_RATE_LIMIT = {
+  max: 8,
+  timeWindow: "1 minute",
+  errorResponseBuilder: () => ({
+    statusCode: 429,
+    message: "Muitas tentativas. Aguarde um momento antes de tentar novamente.",
+  }),
+};
+
 export async function authRoutes(app: FastifyInstance): Promise<void> {
-  app.post("/auth/login", async (request, reply) => {
+  app.post("/auth/login", { config: { rateLimit: AUTH_RATE_LIMIT } }, async (request, reply) => {
     const parsed = loginSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ message: "Payload invalido", errors: parsed.error.flatten().fieldErrors });
@@ -61,7 +71,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/auth/refresh", async (request, reply) => {
+  app.post("/auth/refresh", { config: { rateLimit: AUTH_RATE_LIMIT } }, async (request, reply) => {
     const parsed = refreshSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ message: "Payload invalido" });

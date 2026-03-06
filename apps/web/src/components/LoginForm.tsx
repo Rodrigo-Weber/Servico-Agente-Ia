@@ -1,10 +1,18 @@
 ﻿import { FormEvent, useState } from "react";
-import { ArrowRight, Lock, Mail, ShieldCheck, Sparkles, Workflow, Zap } from "lucide-react";
+import {
+  ArrowRight,
+  Bot,
+  Lock,
+  Mail,
+  MessageSquare,
+  Settings2,
+  Shield,
+  Sparkles,
+} from "lucide-react";
 import { api } from "../api";
 import { AuthSession } from "../types";
 import { ThemeToggle } from "./theme-toggle";
 import { Button } from "./ui/Button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/Card";
 import { Input } from "./ui/Input";
 
 interface LoginFormProps {
@@ -12,6 +20,29 @@ interface LoginFormProps {
   notice?: string;
   onDismissNotice?: () => void;
 }
+
+const FEATURES = [
+  {
+    icon: Bot,
+    title: "Agentes de IA",
+    desc: "Assistentes inteligentes que operam 24/7 para automatizar processos do seu negócio.",
+  },
+  {
+    icon: Settings2,
+    title: "Automações",
+    desc: "Fluxos automatizados que eliminam tarefas repetitivas e aumentam produtividade.",
+  },
+  {
+    icon: MessageSquare,
+    title: "Notificações WhatsApp",
+    desc: "Alertas e comunicações instantâneas direto no WhatsApp dos seus clientes.",
+  },
+  {
+    icon: Shield,
+    title: "Segurança Total",
+    desc: "Criptografia de ponta, multi-empresa e controle de acesso granular.",
+  },
+];
 
 export function LoginForm({ onLogin, notice, onDismissNotice }: LoginFormProps) {
   const [email, setEmail] = useState("");
@@ -36,117 +67,134 @@ export function LoginForm({ onLogin, notice, onDismissNotice }: LoginFormProps) 
 
   return (
     <div className="relative min-h-screen bg-background overflow-hidden">
-      {/* Background decorations */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-primary/5 rounded-full blur-3xl" />
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-primary/5 rounded-full blur-3xl" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-primary/3 rounded-full blur-[120px]" />
+      {/* Ambient background */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute -top-32 -left-32 w-125 h-125 rounded-full bg-primary/4 blur-[100px]" />
+        <div className="absolute bottom-0 right-0 w-150 h-100 rounded-full bg-primary/3 blur-[120px]" />
       </div>
 
+      {/* Theme toggle */}
       <div className="absolute top-5 right-5 z-20">
         <ThemeToggle />
       </div>
 
-      <div className="relative z-10 flex min-h-screen items-center justify-center p-4 sm:p-6">
-        <div className="mx-auto grid w-full max-w-[1100px] gap-12 lg:grid-cols-[1.15fr_0.85fr] items-center">
-
-          {/* Left — Hero */}
-          <section className="hidden lg:flex flex-col justify-center enter-up">
-            <div className="mb-14">
-              <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-4 py-1.5 text-xs font-semibold text-primary mb-6">
-                <Sparkles className="h-3.5 w-3.5" />
-                Plataforma de IA para Empresas
+      {/* Main grid — info left, login right */}
+      <div className="relative z-10 flex min-h-screen">
+        {/* ── LEFT PANEL ── */}
+        <section className="hidden lg:flex lg:w-[55%] xl:w-[56%] flex-col justify-between px-12 xl:px-20 py-14">
+          {/* Top — Brand */}
+          <div className="enter-up">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 border border-primary/20">
+                <Sparkles className="h-5 w-5 text-primary" />
               </div>
+              <span className="text-2xl font-black tracking-tight font-display text-foreground">
+                WEF
+              </span>
+            </div>
+          </div>
 
-              <h1 className="max-w-[480px] text-5xl font-extrabold tracking-tight text-foreground xl:text-[3.5rem] leading-[1.1] font-display">
-                Gerencie sua operação com{" "}
-                <span className="gradient-text">inteligência</span>
+          {/* Middle — Hero + Features */}
+          <div className="flex-1 flex flex-col justify-center -mt-8">
+            <div className="enter-up stagger-1">
+              <p className="inline-block rounded-full bg-primary/10 border border-primary/15 px-3.5 py-1 text-[11px] font-bold uppercase tracking-widest text-primary mb-6">
+                Painel Inteligente
+              </p>
+              <h1 className="text-4xl xl:text-5xl font-extrabold tracking-tight text-foreground leading-[1.1] font-display max-w-lg">
+                Automatize.{" "}
+                <span className="gradient-text">Conecte.</span>{" "}
+                Escale.
               </h1>
-              <p className="mt-5 max-w-md text-base text-muted-foreground leading-relaxed">
-                NFS-e automática, agendamentos inteligentes, cobranças e atendimento via WhatsApp — tudo em um painel unificado.
+              <p className="mt-4 text-base text-muted-foreground leading-relaxed max-w-md">
+                Uma plataforma unificada com agentes de IA, automações e notificações via WhatsApp para gerenciar sua operação com inteligência.
               </p>
             </div>
 
-            <div className="grid gap-4">
-              {[
-                {
-                  icon: Zap,
-                  title: "Automação Inteligente",
-                  description: "IA que entende seu negócio e automatiza atendimento, agendamento e emissão fiscal.",
-                },
-                {
-                  icon: ShieldCheck,
-                  title: "Seguro & Escalável",
-                  description: "Multi-empresa com criptografia, NFS-e real e configuração sem código.",
-                },
-                {
-                  icon: Workflow,
-                  title: "WhatsApp Integrado",
-                  description: "Seus clientes agendam, recebem notas fiscais e lembretes direto no WhatsApp.",
-                },
-              ].map((item, i) => (
+            <div className="grid grid-cols-2 gap-3 mt-10">
+              {FEATURES.map((feat, i) => (
                 <div
-                  key={item.title}
-                  className={`group flex items-start gap-4 rounded-xl border border-border/60 bg-card/50 p-4.5 backdrop-blur-sm transition-all duration-300 hover:bg-card hover:border-primary/25 hover:shadow-soft enter-up stagger-${i + 1}`}
+                  key={feat.title}
+                  className={`group relative rounded-xl border border-border/50 bg-card/40 backdrop-blur-sm p-4 transition-all duration-300 hover:bg-card/70 hover:border-primary/20 hover:shadow-lg enter-up stagger-${i + 2}`}
                 >
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary transition-transform duration-300 group-hover:scale-110">
-                    <item.icon className="h-5 w-5" />
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary mb-3 transition-transform duration-300 group-hover:scale-110">
+                    <feat.icon className="h-4.5 w-4.5" />
                   </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-foreground">{item.title}</h3>
-                    <p className="mt-0.5 text-sm text-muted-foreground leading-relaxed">{item.description}</p>
-                  </div>
+                  <h3 className="text-sm font-bold text-foreground mb-1">{feat.title}</h3>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{feat.desc}</p>
                 </div>
               ))}
             </div>
-          </section>
+          </div>
 
-          {/* Right — Login */}
-          <Card className="rounded-2xl border-border/60 bg-card/80 backdrop-blur-xl shadow-premium-card enter-up stagger-2">
-            <CardHeader className="space-y-5 pt-8 text-center sm:pt-10">
-              <div className="mx-auto flex w-fit items-center justify-center rounded-2xl bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/20 px-6 py-3 shadow-glow-sm">
-                <span className="text-2xl font-mono font-black text-foreground tracking-tight">
-                  {"<WEF />"}
-                </span>
+          {/* Bottom — Footer */}
+          <div className="enter-up stagger-6">
+            <p className="text-xs text-muted-foreground/60">
+              &copy; {new Date().getFullYear()} WEF — Todos os direitos reservados.
+            </p>
+          </div>
+        </section>
+
+        {/* ── RIGHT PANEL — Login ── */}
+        <section className="flex w-full lg:w-[45%] xl:w-[44%] items-center justify-center px-6 sm:px-10 lg:px-14 py-10">
+          <div className="w-full max-w-105 enter-up stagger-2">
+            {/* Mobile brand */}
+            <div className="flex items-center justify-center gap-2 mb-8 lg:hidden">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 border border-primary/20">
+                <Sparkles className="h-5 w-5 text-primary" />
               </div>
-              <div className="space-y-2">
-                <CardTitle className="text-2xl font-display">Bem-vindo de volta</CardTitle>
-                <CardDescription className="text-sm">Acesse com suas credenciais para continuar.</CardDescription>
+              <span className="text-2xl font-black tracking-tight font-display text-foreground">WEF</span>
+            </div>
+
+            {/* Login card */}
+            <div className="rounded-2xl border border-border/60 bg-card/80 backdrop-blur-xl p-8 sm:p-10 shadow-lg">
+              {/* Header */}
+              <div className="text-center mb-8">
+                <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-linear-to-br from-primary/15 to-primary/5 border border-primary/20 shadow-sm">
+                  <span className="text-xl font-mono font-black text-foreground tracking-tighter">
+                    {"<W/>"}
+                  </span>
+                </div>
+                <h2 className="text-2xl font-bold font-display text-foreground">
+                  Bem-vindo de volta
+                </h2>
+                <p className="mt-1.5 text-sm text-muted-foreground">
+                  Entre com suas credenciais para continuar.
+                </p>
               </div>
-            </CardHeader>
-            <CardContent className="pb-8 sm:pb-10">
+
+              {/* Form */}
               <form onSubmit={handleSubmit} className="space-y-5">
-                <div className="space-y-2">
-                  <label htmlFor="login-email" className="form-label pl-0.5">
+                <div className="space-y-1.5">
+                  <label htmlFor="login-email" className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground pl-0.5">
                     Email
                   </label>
                   <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/50" />
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/40" />
                     <Input
                       id="login-email"
                       type="email"
                       placeholder="seu@email.com.br"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="h-11 pl-10 rounded-xl"
+                      className="h-11 pl-10 rounded-xl bg-background/50 border-border/70 focus:bg-background transition-colors"
                       required
                     />
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label htmlFor="login-password" className="form-label pl-0.5">
+                <div className="space-y-1.5">
+                  <label htmlFor="login-password" className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground pl-0.5">
                     Senha
                   </label>
                   <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/50" />
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/40" />
                     <Input
                       id="login-password"
                       type="password"
                       placeholder="••••••••"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="h-11 pl-10 rounded-xl tracking-widest placeholder:tracking-normal"
+                      className="h-11 pl-10 rounded-xl tracking-widest placeholder:tracking-normal bg-background/50 border-border/70 focus:bg-background transition-colors"
                       minLength={8}
                       required
                     />
@@ -179,7 +227,7 @@ export function LoginForm({ onLogin, notice, onDismissNotice }: LoginFormProps) 
                 <Button
                   type="submit"
                   size="lg"
-                  className="w-full rounded-xl font-bold text-sm mt-2 h-11"
+                  className="w-full rounded-xl font-bold text-sm mt-3 h-12 shadow-md hover:shadow-lg transition-shadow"
                   disabled={loading}
                 >
                   {loading ? (
@@ -198,30 +246,24 @@ export function LoginForm({ onLogin, notice, onDismissNotice }: LoginFormProps) 
                   )}
                 </Button>
               </form>
+            </div>
 
-              {/* Mobile-only features */}
-              <div className="mt-8 lg:hidden border-t border-border pt-6">
-                <p className="text-xs text-center text-muted-foreground mb-3 font-medium">
-                  Plataforma de IA para Empresas
-                </p>
-                <div className="flex justify-center gap-6 text-muted-foreground/60">
-                  <div className="flex flex-col items-center gap-1">
-                    <Zap className="h-4 w-4" />
-                    <span className="text-2xs">Automação</span>
+            {/* Mobile features */}
+            <div className="mt-8 lg:hidden">
+              <div className="grid grid-cols-2 gap-2.5">
+                {FEATURES.map((feat) => (
+                  <div key={feat.title} className="flex items-center gap-2.5 rounded-lg border border-border/40 bg-card/30 backdrop-blur-sm px-3 py-2.5">
+                    <feat.icon className="h-4 w-4 text-primary shrink-0" />
+                    <span className="text-xs font-medium text-muted-foreground">{feat.title}</span>
                   </div>
-                  <div className="flex flex-col items-center gap-1">
-                    <ShieldCheck className="h-4 w-4" />
-                    <span className="text-2xs">Segurança</span>
-                  </div>
-                  <div className="flex flex-col items-center gap-1">
-                    <Workflow className="h-4 w-4" />
-                    <span className="text-2xs">WhatsApp</span>
-                  </div>
-                </div>
+                ))}
               </div>
-            </CardContent>
-          </Card>
-        </div>
+              <p className="text-center text-[10px] text-muted-foreground/50 mt-5">
+                &copy; {new Date().getFullYear()} WEF
+              </p>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );
