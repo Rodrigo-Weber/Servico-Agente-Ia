@@ -106,7 +106,7 @@ export function LoginForm({ onLogin, notice, onDismissNotice }: LoginFormProps) 
             <CardHeader className="space-y-5 pt-8 text-center sm:pt-10">
               <div className="mx-auto flex w-fit items-center justify-center rounded-2xl bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/20 px-6 py-3 shadow-glow-sm">
                 <span className="text-2xl font-mono font-black text-foreground tracking-tight">
-                  {"<RW />"}
+                  {"<WEF />"}
                 </span>
               </div>
               <div className="space-y-2">

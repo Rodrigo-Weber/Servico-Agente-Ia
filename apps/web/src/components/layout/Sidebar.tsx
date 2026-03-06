@@ -158,12 +158,12 @@ export function Sidebar({
         <div className="flex w-full items-center justify-between gap-2">
           <div className={cn("flex items-center gap-3", compact ? "w-full justify-center" : "")}>
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-primary to-primary/80 text-primary-foreground shadow-glow-sm transition-transform hover:scale-105 duration-300">
-              <span className="font-mono text-xs font-black">RW</span>
+              <span className="font-mono text-xs font-black">WEF</span>
             </div>
             {!compact ? (
               <div className="min-w-0">
                 <p className="font-display text-sm font-bold leading-tight text-foreground tracking-tight">
-                  Weber Serviços
+                  Painel WEF
                 </p>
                 <p className="truncate text-[11px] text-muted-foreground font-medium">{roleSubtitle}</p>
               </div>
