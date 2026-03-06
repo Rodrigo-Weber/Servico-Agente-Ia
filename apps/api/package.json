@@ -43,6 +43,7 @@
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.8",
     "@types/node": "^22.10.5",
+    "mysql2": "^3.19.0",
     "prisma": "^6.3.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
