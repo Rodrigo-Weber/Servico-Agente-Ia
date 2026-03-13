@@ -114,6 +114,10 @@ export default function App() {
           title: "Empresas",
           subtitle: "Cadastre, organize e gerencie cada operacao em minutos",
         },
+        users: {
+          title: "Usuarios",
+          subtitle: "Crie acessos administrativos e usuarios vinculados as empresas",
+        },
         monitoring: {
           title: "Monitoramento",
           subtitle: "Acompanhe saude operacional, certificados e sincronizacoes em tempo real",

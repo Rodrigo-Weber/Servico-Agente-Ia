@@ -54,6 +54,23 @@ export interface Company {
   };
 }
 
+export interface AdminUser {
+  id: string;
+  role: "admin" | "company";
+  email: string;
+  companyId: string | null;
+  company: {
+    id: string;
+    name: string;
+    email: string;
+    aiType: Exclude<ServiceType, null>;
+    active: boolean;
+  } | null;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface NfeItem {
   id: string;
   codigo: string | null;

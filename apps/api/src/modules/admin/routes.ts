@@ -1,5 +1,5 @@
 ﻿import { FastifyInstance } from "fastify";
-import { CompanyAiType, MessageDispatchStatus } from "@prisma/client";
+import { CompanyAiType, MessageDispatchStatus, UserRole } from "@prisma/client";
 import { z } from "zod";
 import { hashPassword } from "../../lib/password.js";
 import { normalizePhone } from "../../lib/phone.js";
@@ -33,6 +33,28 @@ const updateCompanySchema = z.object({
   monthlyNfseLimit: z.number().int().min(0).optional(),
   active: z.boolean().optional(),
 });
+
+const MANAGEABLE_USER_ROLES = ["admin", "company"] as const;
+
+const createUserSchema = z.object({
+  role: z.enum(MANAGEABLE_USER_ROLES).default("admin"),
+  email: z.string().trim().email(),
+  password: z.string().min(8),
+  companyId: z.string().trim().min(1).nullable().optional(),
+  active: z.boolean().default(true),
+});
+
+const updateUserSchema = z
+  .object({
+    role: z.enum(MANAGEABLE_USER_ROLES).optional(),
+    email: z.string().trim().email().optional(),
+    password: z.string().min(8).optional(),
+    companyId: z.string().trim().min(1).nullable().optional(),
+    active: z.boolean().optional(),
+  })
+  .refine((value) => Object.values(value).some((item) => item !== undefined), {
+    message: "Informe ao menos um campo para atualizar",
+  });
 
 const createNumberSchema = z.object({
   phone: z.string().min(8),
@@ -265,6 +287,12 @@ function validateAndNormalizeDocument(value: string): { normalized: string; type
   return null;
 }
 
+type ManageableUserRole = (typeof MANAGEABLE_USER_ROLES)[number];
+
+function isManageableUserRole(role: UserRole): role is ManageableUserRole {
+  return role === "admin" || role === "company";
+}
+
 function validateRatePolicyItem(item: z.infer<typeof rateLimitPolicyItemSchema>): string | null {
   if (item.maxDelayMs < item.minDelayMs) {
     return "maxDelayMs deve ser maior ou igual a minDelayMs";
@@ -462,6 +490,42 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
               : data.evolutionInstanceName.trim() || null;
         const nextDocument = document?.normalized ?? company.cnpj;
 
+        if (data.email && data.email !== company.email) {
+          const currentPrimaryUser = await prisma.user.findFirst({
+            where: {
+              companyId: id,
+              role: "company",
+              email: company.email,
+            },
+            select: { id: true },
+          });
+
+          const [existingCompanyWithEmail, existingUserWithEmail] = await Promise.all([
+            prisma.company.findFirst({
+              where: {
+                id: { not: id },
+                email: data.email,
+              },
+              select: { id: true },
+            }),
+            prisma.user.findFirst({
+              where: {
+                id: currentPrimaryUser?.id ? { not: currentPrimaryUser.id } : undefined,
+                email: data.email,
+              },
+              select: { id: true },
+            }),
+          ]);
+
+          if (existingCompanyWithEmail) {
+            return reply.code(409).send({ message: "Ja existe outra empresa com este email" });
+          }
+
+          if (existingUserWithEmail) {
+            return reply.code(409).send({ message: "Email ja em uso por outro usuario" });
+          }
+        }
+
         if (companyAiTypeRequiresDedicatedInstance(nextAiType) && !nextInstanceName) {
           return reply.code(400).send({ message: "Informe o nome da instancia Evolution para empresas de agendamento/cobranca" });
         }
@@ -513,7 +577,13 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
             });
           }
 
-          const companyUser = await tx.user.findFirst({ where: { companyId: id, role: "company" } });
+          const companyUser = await tx.user.findFirst({
+            where: {
+              companyId: id,
+              role: "company",
+              email: company.email,
+            },
+          });
           if (companyUser) {
             await tx.user.update({
               where: { id: companyUser.id },
@@ -529,6 +599,247 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
         });
 
         return updated;
+      });
+
+      adminApp.get("/users", async () => {
+        const users = await prisma.user.findMany({
+          where: {
+            role: {
+              in: [...MANAGEABLE_USER_ROLES],
+            },
+          },
+          orderBy: [{ role: "asc" }, { createdAt: "desc" }],
+          include: {
+            company: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                aiType: true,
+                active: true,
+              },
+            },
+          },
+        });
+
+        return users;
+      });
+
+      adminApp.post("/users", async (request, reply) => {
+        const parsed = createUserSchema.safeParse(request.body);
+        if (!parsed.success) {
+          return reply.code(400).send({ message: "Payload invalido", errors: parsed.error.flatten().fieldErrors });
+        }
+
+        const data = parsed.data;
+        const normalizedCompanyId = data.companyId?.trim() || null;
+
+        if (data.role === "admin" && normalizedCompanyId) {
+          return reply.code(400).send({ message: "Usuarios admin nao podem estar vinculados a uma empresa" });
+        }
+
+        if (data.role === "company" && !normalizedCompanyId) {
+          return reply.code(400).send({ message: "Selecione a empresa para usuarios com acesso de empresa" });
+        }
+
+        const [existingUser, company] = await Promise.all([
+          prisma.user.findUnique({ where: { email: data.email } }),
+          normalizedCompanyId
+            ? prisma.company.findUnique({
+              where: { id: normalizedCompanyId },
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                aiType: true,
+                active: true,
+              },
+            })
+            : Promise.resolve(null),
+        ]);
+
+        if (existingUser) {
+          return reply.code(409).send({ message: "Email ja em uso por outro usuario" });
+        }
+
+        if (data.role === "company" && !company) {
+          return reply.code(404).send({ message: "Empresa nao encontrada para vincular o usuario" });
+        }
+
+        const user = await prisma.user.create({
+          data: {
+            role: data.role,
+            companyId: data.role === "company" ? normalizedCompanyId : null,
+            email: data.email,
+            passwordHash: await hashPassword(data.password),
+            active: data.active,
+          },
+          include: {
+            company: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                aiType: true,
+                active: true,
+              },
+            },
+          },
+        });
+
+        return reply.code(201).send(user);
+      });
+
+      adminApp.patch("/users/:id", async (request, reply) => {
+        const params = z.object({ id: z.string().min(1) }).safeParse(request.params);
+        const parsed = updateUserSchema.safeParse(request.body);
+
+        if (!params.success) {
+          return reply.code(400).send({ message: "ID invalido", errors: params.error.flatten().fieldErrors });
+        }
+
+        if (!parsed.success) {
+          return reply.code(400).send({ message: "Payload invalido", errors: parsed.error.flatten().fieldErrors });
+        }
+
+        const existingUser = await prisma.user.findUnique({
+          where: { id: params.data.id },
+          include: {
+            company: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                aiType: true,
+                active: true,
+              },
+            },
+          },
+        });
+
+        if (!existingUser || !isManageableUserRole(existingUser.role)) {
+          return reply.code(404).send({ message: "Usuario nao encontrado" });
+        }
+
+        const data = parsed.data;
+        const nextRole = data.role ?? existingUser.role;
+        const nextCompanyId =
+          nextRole === "company"
+            ? data.companyId === undefined
+              ? existingUser.companyId
+              : data.companyId?.trim() || null
+            : null;
+
+        if (nextRole === "admin" && nextCompanyId) {
+          return reply.code(400).send({ message: "Usuarios admin nao podem estar vinculados a uma empresa" });
+        }
+
+        if (nextRole === "company" && !nextCompanyId) {
+          return reply.code(400).send({ message: "Selecione a empresa para usuarios com acesso de empresa" });
+        }
+
+        if (request.authUser?.id === existingUser.id) {
+          if (nextRole !== "admin") {
+            return reply.code(400).send({ message: "Voce nao pode remover seu proprio acesso de administrador" });
+          }
+
+          if (data.active === false) {
+            return reply.code(400).send({ message: "Voce nao pode desativar seu proprio usuario" });
+          }
+        }
+
+        if (data.email && data.email !== existingUser.email) {
+          const duplicate = await prisma.user.findFirst({
+            where: {
+              id: { not: existingUser.id },
+              email: data.email,
+            },
+            select: { id: true },
+          });
+
+          if (duplicate) {
+            return reply.code(409).send({ message: "Email ja em uso por outro usuario" });
+          }
+        }
+
+        if (nextRole === "company" && nextCompanyId) {
+          const company = await prisma.company.findUnique({
+            where: { id: nextCompanyId },
+            select: { id: true },
+          });
+
+          if (!company) {
+            return reply.code(404).send({ message: "Empresa nao encontrada para vincular o usuario" });
+          }
+        }
+
+        const updated = await prisma.user.update({
+          where: { id: existingUser.id },
+          data: {
+            role: nextRole,
+            companyId: nextCompanyId,
+            email: data.email,
+            passwordHash: data.password ? await hashPassword(data.password) : undefined,
+            active: data.active,
+          },
+          include: {
+            company: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                aiType: true,
+                active: true,
+              },
+            },
+          },
+        });
+
+        return reply.send(updated);
+      });
+
+      adminApp.delete("/users/:id", async (request, reply) => {
+        const params = z.object({ id: z.string().min(1) }).safeParse(request.params);
+        if (!params.success) {
+          return reply.code(400).send({ message: "ID invalido", errors: params.error.flatten().fieldErrors });
+        }
+
+        const existingUser = await prisma.user.findUnique({
+          where: { id: params.data.id },
+          select: {
+            id: true,
+            role: true,
+            email: true,
+          },
+        });
+
+        if (!existingUser || !isManageableUserRole(existingUser.role)) {
+          return reply.code(404).send({ message: "Usuario nao encontrado" });
+        }
+
+        if (request.authUser?.id === existingUser.id) {
+          return reply.code(400).send({ message: "Voce nao pode excluir seu proprio usuario" });
+        }
+
+        if (existingUser.role === "admin") {
+          const otherActiveAdmins = await prisma.user.count({
+            where: {
+              role: "admin",
+              active: true,
+              id: { not: existingUser.id },
+            },
+          });
+
+          if (otherActiveAdmins <= 0) {
+            return reply.code(400).send({ message: "Crie ou mantenha outro admin ativo antes de excluir este usuario" });
+          }
+        }
+
+        await prisma.user.delete({
+          where: { id: existingUser.id },
+        });
+
+        return reply.code(204).send();
       });
 
       adminApp.post("/companies/:id/whatsapp-numbers", async (request, reply) => {

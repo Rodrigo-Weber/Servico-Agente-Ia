@@ -1,5 +1,6 @@
 import {
   AdminMonitoringOverview,
+  AdminUser,
   BarberAppointment,
   BarberDashboardSummary,
   BarberProfile,
@@ -163,6 +164,52 @@ export const api = {
       method: "POST",
       token,
       body: payload,
+    });
+  },
+
+  getUsers(token: string) {
+    return request<AdminUser[]>("/admin/users", { token });
+  },
+
+  createUser(
+    token: string,
+    payload: {
+      role: "admin" | "company";
+      email: string;
+      password: string;
+      companyId?: string | null;
+      active: boolean;
+    },
+  ) {
+    return request<AdminUser>("/admin/users", {
+      method: "POST",
+      token,
+      body: payload,
+    });
+  },
+
+  updateUser(
+    token: string,
+    userId: string,
+    payload: {
+      role?: "admin" | "company";
+      email?: string;
+      password?: string;
+      companyId?: string | null;
+      active?: boolean;
+    },
+  ) {
+    return request<AdminUser>(`/admin/users/${userId}`, {
+      method: "PATCH",
+      token,
+      body: payload,
+    });
+  },
+
+  deleteUser(token: string, userId: string) {
+    return request<void>(`/admin/users/${userId}`, {
+      method: "DELETE",
+      token,
     });
   },
 

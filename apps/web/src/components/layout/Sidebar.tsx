@@ -47,6 +47,7 @@ function getNavItems(session: AuthSession): NavItem[] {
     return [
       { id: "dashboard", label: "Visao geral", icon: LayoutDashboard },
       { id: "companies", label: "Empresas", icon: Building2 },
+      { id: "users", label: "Usuarios", icon: Users2 },
       { id: "monitoring", label: "Monitoramento", icon: Activity },
       { id: "settings", label: "IA e WhatsApp", icon: MessageSquare },
     ];

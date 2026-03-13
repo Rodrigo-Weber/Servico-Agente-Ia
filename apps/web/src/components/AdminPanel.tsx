@@ -18,7 +18,7 @@ import {
   Users,
 } from "lucide-react";
 import { api } from "../api";
-import { AdminMonitoringOverview, Company, OperationalSettings, ServiceType } from "../types";
+import { AdminMonitoringOverview, AdminUser, Company, OperationalSettings, ServiceType } from "../types";
 import { Badge } from "./ui/Badge";
 import { Button } from "./ui/Button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/Card";
@@ -34,6 +34,15 @@ interface AdminPanelProps {
 
 type NumberDraftMap = Record<string, { phone: string; active: boolean }>;
 const DAILY_SYNC_HOUR = 18;
+type AdminManageableRole = AdminUser["role"];
+type AdminUserRoleFilter = "all" | AdminManageableRole;
+type AdminUserFormState = {
+  role: AdminManageableRole;
+  email: string;
+  password: string;
+  companyId: string;
+  active: boolean;
+};
 
 function normalizeStatus(value: unknown): string {
   if (typeof value !== "string") {
@@ -199,12 +208,58 @@ function buildNumberDraftMap(company: Company | null): NumberDraftMap {
   }, {});
 }
 
+function createEmptyAdminUserForm(): AdminUserFormState {
+  return {
+    role: "admin",
+    email: "",
+    password: "",
+    companyId: "",
+    active: true,
+  };
+}
+
+function getUserRoleLabel(role: AdminManageableRole): string {
+  return role === "admin" ? "Administrador" : "Usuario da empresa";
+}
+
+function getUserRoleMeta(role: AdminManageableRole): {
+  label: string;
+  description: string;
+  badge: "default" | "secondary" | "destructive" | "outline" | "warning" | "info";
+  cardClassName: string;
+  iconClassName: string;
+} {
+  if (role === "admin") {
+    return {
+      label: "Administrador",
+      description: "Acesso total ao painel, usuarios, empresas, monitoramento e configuracoes centrais.",
+      badge: "info",
+      cardClassName: "border-blue-500/30 bg-blue-500/10 hover:border-blue-500/50",
+      iconClassName: "bg-blue-500/10 text-blue-400 ring-blue-500/25",
+    };
+  }
+
+    return {
+      label: "Usuario da empresa",
+      description: "Acesso restrito a uma empresa especifica, respeitando o modulo configurado nela.",
+      badge: "default",
+      cardClassName: "border-emerald-500/25 bg-emerald-500/10 hover:border-emerald-500/45",
+    iconClassName: "bg-emerald-500/10 text-emerald-400 ring-emerald-500/25",
+    };
+  }
+
+function getUserRoleOrder(role: AdminManageableRole): number {
+  return role === "admin" ? 0 : 1;
+}
+
 export function AdminPanel({ token, activeView }: AdminPanelProps) {
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState("");
 
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [selectedUserId, setSelectedUserId] = useState("");
   const [numberDrafts, setNumberDrafts] = useState<NumberDraftMap>({});
   const [savingNumberId, setSavingNumberId] = useState<string | null>(null);
   const [deletingNumberId, setDeletingNumberId] = useState<string | null>(null);
@@ -255,6 +310,11 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
   const [resettingCooldown, setResettingCooldown] = useState<string | null>(null);
   const [companiesTab, setCompaniesTab] = useState<"list" | "create" | "config">("list");
   const [companySearch, setCompanySearch] = useState("");
+  const [userSearch, setUserSearch] = useState("");
+  const [userRoleFilter, setUserRoleFilter] = useState<AdminUserRoleFilter>("all");
+  const [userCompanyFilter, setUserCompanyFilter] = useState("all");
+  const [createUserForm, setCreateUserForm] = useState<AdminUserFormState>(createEmptyAdminUserForm);
+  const [editUserForm, setEditUserForm] = useState<AdminUserFormState>(createEmptyAdminUserForm);
 
   const filteredCompanies = useMemo(() => {
     const search = companySearch.trim().toLowerCase();
@@ -272,6 +332,47 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
     [companies, selectedCompanyId],
   );
 
+  const companyOptions = useMemo(
+    () => [...companies].sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
+    [companies],
+  );
+
+  const filteredUsers = useMemo(() => {
+    const search = userSearch.trim().toLowerCase();
+    return users
+      .filter((user) => {
+        if (userRoleFilter !== "all" && user.role !== userRoleFilter) {
+          return false;
+        }
+
+        if (userCompanyFilter !== "all" && user.companyId !== userCompanyFilter) {
+          return false;
+        }
+
+        if (!search) {
+          return true;
+        }
+
+      const companyName = user.company?.name.toLowerCase() ?? "";
+        return (
+        user.email.toLowerCase().includes(search) ||
+        user.role.toLowerCase().includes(search) ||
+        companyName.includes(search)
+      );
+      })
+      .sort((a, b) => {
+        const roleOrder = getUserRoleOrder(a.role) - getUserRoleOrder(b.role);
+        if (roleOrder !== 0) return roleOrder;
+        if (a.active !== b.active) return Number(b.active) - Number(a.active);
+        return a.email.localeCompare(b.email, "pt-BR");
+      });
+  }, [userCompanyFilter, userRoleFilter, userSearch, users]);
+
+  const selectedUser = useMemo(
+    () => users.find((user) => user.id === selectedUserId) ?? null,
+    [selectedUserId, users],
+  );
+
   const stats = useMemo(() => {
     const total = companies.length;
     const active = companies.filter((company) => company.active).length;
@@ -280,6 +381,17 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
 
     return { total, active, withCertificate, totalAuthorized };
   }, [companies]);
+
+  const userStats = useMemo(() => {
+    const total = users.length;
+    const active = users.filter((user) => user.active).length;
+    const admins = users.filter((user) => user.role === "admin").length;
+    const companyUsers = users.filter((user) => user.role === "company").length;
+    const inactive = total - active;
+    const linkedCompanies = new Set(users.map((user) => user.companyId).filter(Boolean)).size;
+
+    return { total, active, admins, companyUsers, inactive, linkedCompanies };
+  }, [users]);
 
   const statusTone = useMemo(() => getStatusTone(waStatus), [waStatus]);
   const isWhatsappConnected = useMemo(() => {
@@ -332,6 +444,21 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
   }, [selectedCompany]);
 
   useEffect(() => {
+    if (!selectedUser) {
+      setEditUserForm(createEmptyAdminUserForm());
+      return;
+    }
+
+    setEditUserForm({
+      role: selectedUser.role,
+      email: selectedUser.email,
+      password: "",
+      companyId: selectedUser.companyId ?? "",
+      active: selectedUser.active,
+    });
+  }, [selectedUser]);
+
+  useEffect(() => {
     if (!selectedCompanyId) {
       setCompanyPrompt("");
       return;
@@ -379,8 +506,9 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
     setLoading(true);
 
     try {
-      const [companiesData, sessionData, nfePromptData, barberPromptData, billingPromptData, restaurantPromptData, clinicPromptData, operationalSettingsData] = await Promise.all([
+      const [companiesData, usersData, sessionData, nfePromptData, barberPromptData, billingPromptData, restaurantPromptData, clinicPromptData, operationalSettingsData] = await Promise.all([
         api.getCompanies(token),
+        api.getUsers(token),
         api.getWhatsappSession(token),
         api.getGlobalPrompt(token, "nfe_import").catch(() => ({ promptText: "" })),
         api.getGlobalPrompt(token, "barber_booking").catch(() => ({ promptText: "" })),
@@ -391,6 +519,7 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
       ]);
 
       setCompanies(companiesData);
+      setUsers(usersData);
       setWaStatus(normalizeStatus(sessionData.session.status));
       setNfePrompt(nfePromptData.promptText || "");
       setBarberPrompt(barberPromptData.promptText || "");
@@ -402,6 +531,11 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
       const selectedStillExists = companiesData.some((company) => company.id === selectedCompanyId);
       if (!selectedStillExists) {
         setSelectedCompanyId(companiesData[0]?.id ?? "");
+      }
+
+      const selectedUserStillExists = usersData.some((user) => user.id === selectedUserId);
+      if (!selectedUserStillExists) {
+        setSelectedUserId(usersData[0]?.id ?? "");
       }
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : "Falha ao carregar dados do painel");
@@ -504,6 +638,110 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
       await loadAll();
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : "Falha ao atualizar empresa");
+    }
+  }
+
+  async function handleCreateUser(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFeedback("");
+
+    const password = createUserForm.password.trim();
+    if (password.length < 8) {
+      setFeedback("A senha do usuario precisa ter pelo menos 8 caracteres.");
+      return;
+    }
+
+    if (createUserForm.role === "company" && !createUserForm.companyId) {
+      setFeedback("Selecione uma empresa para criar um usuario com acesso de empresa.");
+      return;
+    }
+
+    try {
+      const created = await api.createUser(token, {
+        role: createUserForm.role,
+        email: createUserForm.email,
+        password,
+        companyId: createUserForm.role === "company" ? createUserForm.companyId : null,
+        active: createUserForm.active,
+      });
+
+      setCreateUserForm(createEmptyAdminUserForm());
+      setFeedback("Usuario criado com sucesso.");
+      await loadAll();
+      setSelectedUserId(created.id);
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : "Falha ao criar usuario");
+    }
+  }
+
+  async function handleUpdateUser(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFeedback("");
+
+    if (!selectedUserId) {
+      setFeedback("Selecione um usuario para editar.");
+      return;
+    }
+
+    const payload: {
+      role?: AdminManageableRole;
+      email?: string;
+      password?: string;
+      companyId?: string | null;
+      active?: boolean;
+    } = {
+      role: editUserForm.role,
+      email: editUserForm.email,
+      companyId: editUserForm.role === "company" ? editUserForm.companyId || null : null,
+      active: editUserForm.active,
+    };
+
+    if (editUserForm.role === "company" && !editUserForm.companyId) {
+      setFeedback("Selecione a empresa vinculada para esse usuario.");
+      return;
+    }
+
+    const password = editUserForm.password.trim();
+    if (password.length > 0) {
+      if (password.length < 8) {
+        setFeedback("A nova senha precisa ter pelo menos 8 caracteres.");
+        return;
+      }
+
+      payload.password = password;
+    }
+
+    try {
+      await api.updateUser(token, selectedUserId, payload);
+      setEditUserForm((prev) => ({ ...prev, password: "" }));
+      setFeedback("Usuario atualizado com sucesso.");
+      await loadAll();
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : "Falha ao atualizar usuario");
+    }
+  }
+
+  async function handleDeleteUser() {
+    if (!selectedUser) {
+      setFeedback("Selecione um usuario para excluir.");
+      return;
+    }
+
+    const confirmDelete = window.confirm(`Deseja realmente excluir o usuario ${selectedUser.email}?`);
+    if (!confirmDelete) {
+      return;
+    }
+
+    setFeedback("");
+
+    try {
+      await api.deleteUser(token, selectedUser.id);
+      setSelectedUserId("");
+      setEditUserForm(createEmptyAdminUserForm());
+      setFeedback("Usuario excluido com sucesso.");
+      await loadAll();
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : "Falha ao excluir usuario");
     }
   }
 
@@ -1903,6 +2141,395 @@ export function AdminPanel({ token, activeView }: AdminPanelProps) {
             </CardContent>
           </Card>
         ) : null}
+
+        {feedback ? <FeedbackBox message={feedback} /> : null}
+      </div>
+    );
+  }
+
+  if (activeView === "users") {
+    const selectClassName =
+      "h-10 w-full rounded-xl border border-input bg-background/50 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40";
+    const createRoleMeta = getUserRoleMeta(createUserForm.role);
+    const editRoleMeta = selectedUser ? getUserRoleMeta(editUserForm.role) : null;
+    const createSelectedCompany = companyOptions.find((company) => company.id === createUserForm.companyId) ?? null;
+    const editSelectedCompany = companyOptions.find((company) => company.id === editUserForm.companyId) ?? null;
+    const hasUserFilters = Boolean(userSearch.trim() || userRoleFilter !== "all" || userCompanyFilter !== "all");
+
+    return (
+      <div className="space-y-6">
+        <div className="grid auto-rows-fr gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard icon={Users} label="Usuarios cadastrados" value={userStats.total} raw={`Empresas atendidas: ${userStats.linkedCompanies}`} />
+          <StatCard icon={ShieldCheck} label="Administradores" value={userStats.admins} raw="Controle total do painel" />
+          <StatCard icon={Building2} label="Usuarios de empresa" value={userStats.companyUsers} raw="Acessos segmentados por operacao" />
+          <StatCard icon={Activity} label="Usuarios ativos" value={userStats.active} raw={`Inativos: ${userStats.inactive}`} />
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Gerenciar usuarios</CardTitle>
+            <CardDescription>Perfis barber continuam no modulo operacional. Aqui ficam apenas admin e company.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap items-center gap-2">
+            <Badge variant="info">{userStats.total} usuarios</Badge>
+            <Badge variant="default">{userStats.admins} admins</Badge>
+            <Badge variant="outline">{userStats.companyUsers} usuarios de empresa</Badge>
+            <Badge variant={userStats.inactive > 0 ? "warning" : "secondary"}>{userStats.inactive} inativos</Badge>
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
+          <Card>
+            <CardHeader>
+              <CardTitle>Novo usuario</CardTitle>
+              <CardDescription>Cadastro rapido e direto.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleCreateUser} className="space-y-4">
+                <div className="form-group">
+                  <label className="form-label">Perfil</label>
+                  <select
+                    className={selectClassName}
+                    value={createUserForm.role}
+                    onChange={(event) =>
+                      setCreateUserForm((prev) => ({
+                        ...prev,
+                        role: event.target.value as AdminManageableRole,
+                        companyId: event.target.value === "company" ? prev.companyId : "",
+                      }))
+                    }
+                  >
+                    <option value="admin">Administrador</option>
+                    <option value="company">Usuario da empresa</option>
+                  </select>
+                  <p className="mt-1 text-[11px] text-muted-foreground">{createRoleMeta.description}</p>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Email</label>
+                  <Input
+                    type="email"
+                    placeholder="usuario@dominio.com"
+                    value={createUserForm.email}
+                    onChange={(event) => setCreateUserForm((prev) => ({ ...prev, email: event.target.value }))}
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Senha</label>
+                  <Input
+                    type="password"
+                    minLength={8}
+                    placeholder="Minimo de 8 caracteres"
+                    value={createUserForm.password}
+                    onChange={(event) => setCreateUserForm((prev) => ({ ...prev, password: event.target.value }))}
+                    required
+                  />
+                </div>
+
+                {createUserForm.role === "company" ? (
+                  <div className="form-group">
+                    <label className="form-label">Empresa</label>
+                    <select
+                      className={selectClassName}
+                      value={createUserForm.companyId}
+                      onChange={(event) => setCreateUserForm((prev) => ({ ...prev, companyId: event.target.value }))}
+                      required
+                    >
+                      <option value="">Selecione uma empresa...</option>
+                      {companyOptions.map((company) => (
+                        <option key={company.id} value={company.id}>
+                          {company.name}
+                        </option>
+                      ))}
+                    </select>
+                    {createSelectedCompany ? (
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {getServiceLabel(createSelectedCompany.aiType)} •{" "}
+                        {createSelectedCompany.active ? "empresa ativa" : "empresa inativa"}
+                      </p>
+                    ) : null}
+                    {companyOptions.length === 0 ? (
+                      <p className="mt-1 text-xs text-muted-foreground">Cadastre uma empresa antes de criar usuarios com acesso de empresa.</p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={createUserForm.active}
+                    onChange={(event) => setCreateUserForm((prev) => ({ ...prev, active: event.target.checked }))}
+                  />
+                  Usuario ativo
+                </label>
+
+                <div className="flex gap-2">
+                  <Button type="submit" disabled={createUserForm.role === "company" && companyOptions.length === 0}>
+                    <Plus className="mr-1.5 h-4 w-4" />
+                    Criar
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={() => setCreateUserForm(createEmptyAdminUserForm())}>
+                    Limpar
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Usuarios cadastrados</CardTitle>
+              <CardDescription>Busca simples e lista compacta.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px_220px_auto]">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Buscar por email, perfil ou empresa..."
+                    value={userSearch}
+                    onChange={(event) => setUserSearch(event.target.value)}
+                    className="pl-9 pr-10"
+                  />
+                  {userSearch ? (
+                    <button
+                      type="button"
+                      onClick={() => setUserSearch("")}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                      aria-label="Limpar busca"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                </div>
+
+                <select
+                  className={selectClassName}
+                  value={userRoleFilter}
+                  onChange={(event) => setUserRoleFilter(event.target.value as AdminUserRoleFilter)}
+                >
+                  <option value="all">Todos os perfis</option>
+                  <option value="admin">Administradores</option>
+                  <option value="company">Usuarios de empresa</option>
+                </select>
+
+                <select
+                  className={selectClassName}
+                  value={userCompanyFilter}
+                  onChange={(event) => setUserCompanyFilter(event.target.value)}
+                >
+                  <option value="all">Todas as empresas</option>
+                  {companyOptions.map((company) => (
+                    <option key={company.id} value={company.id}>
+                      {company.name}
+                    </option>
+                  ))}
+                </select>
+
+                {hasUserFilters ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setUserSearch("");
+                      setUserRoleFilter("all");
+                      setUserCompanyFilter("all");
+                    }}
+                  >
+                    Limpar
+                  </Button>
+                ) : (
+                  <div />
+                )}
+              </div>
+
+              <p className="text-xs text-muted-foreground">{filteredUsers.length} de {users.length} usuario(s)</p>
+
+              {filteredUsers.length === 0 ? (
+                <EmptyState
+                  icon={Users}
+                  title={userSearch ? "Nenhum usuario encontrado" : "Nenhum usuario cadastrado"}
+                  description={userSearch ? "Ajuste os filtros de busca." : "Use o formulario ao lado para criar o primeiro acesso."}
+                />
+              ) : (
+                <div className="max-h-[560px] space-y-2 overflow-y-auto pr-1">
+                  {filteredUsers.map((user) => {
+                    const isSelected = selectedUserId === user.id;
+                    return (
+                      <button
+                        key={user.id}
+                        type="button"
+                        onClick={() => setSelectedUserId(user.id)}
+                        className={cn(
+                          "w-full rounded-xl border p-3 text-left transition-all",
+                          isSelected
+                            ? "border-primary/35 bg-primary/5 shadow-soft"
+                            : "border-border/50 bg-card hover:border-primary/20 hover:bg-muted/30",
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="truncate text-sm font-semibold text-foreground">{user.email}</p>
+                              <Badge variant={user.role === "admin" ? "info" : "default"}>{getUserRoleLabel(user.role)}</Badge>
+                              <Badge variant={user.active ? "default" : "secondary"}>{user.active ? "Ativo" : "Inativo"}</Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {user.company ? `${user.company.name} • ${getServiceLabel(user.company.aiType)}` : "Acesso global"}
+                            </p>
+                          </div>
+                          {isSelected ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" /> : null}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>{selectedUser ? `Editar usuario — ${selectedUser.email}` : "Edicao de usuario"}</CardTitle>
+            <CardDescription>
+              {selectedUser ? "Edicao simples do acesso selecionado." : "Selecione um usuario na lista para editar."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {selectedUser ? (
+              <form onSubmit={handleUpdateUser} className="max-w-3xl space-y-4">
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/50 bg-muted/20 px-4 py-3 text-sm">
+                  <Badge variant={editRoleMeta?.badge ?? "outline"}>{editRoleMeta?.label ?? getUserRoleLabel(selectedUser.role)}</Badge>
+                  <Badge variant={selectedUser.active ? "default" : "secondary"}>
+                    {selectedUser.active ? "Ativo" : "Inativo"}
+                  </Badge>
+                  <span className="text-muted-foreground">
+                    {selectedUser.company ? `${selectedUser.company.name} • ${getServiceLabel(selectedUser.company.aiType)}` : "Acesso global"}
+                  </span>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="form-group">
+                    <label className="form-label">Email</label>
+                    <Input
+                      type="email"
+                      value={editUserForm.email}
+                      onChange={(event) => setEditUserForm((prev) => ({ ...prev, email: event.target.value }))}
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Nova senha</label>
+                    <Input
+                      type="password"
+                      placeholder="Deixe em branco para manter"
+                      value={editUserForm.password}
+                      onChange={(event) => setEditUserForm((prev) => ({ ...prev, password: event.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="form-group">
+                    <label className="form-label">Perfil</label>
+                    <select
+                      className={selectClassName}
+                      value={editUserForm.role}
+                      onChange={(event) =>
+                        setEditUserForm((prev) => ({
+                          ...prev,
+                          role: event.target.value as AdminManageableRole,
+                          companyId: event.target.value === "company" ? prev.companyId : "",
+                        }))
+                      }
+                    >
+                      <option value="admin">Administrador</option>
+                      <option value="company">Usuario da empresa</option>
+                    </select>
+                    <p className="mt-1 text-[11px] text-muted-foreground">{editRoleMeta?.description}</p>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Status</label>
+                    <label className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={editUserForm.active}
+                        onChange={(event) => setEditUserForm((prev) => ({ ...prev, active: event.target.checked }))}
+                      />
+                      Usuario ativo
+                    </label>
+                  </div>
+                </div>
+
+                {editUserForm.role === "company" ? (
+                  <div className="form-group">
+                    <label className="form-label">Empresa</label>
+                    <select
+                      className={selectClassName}
+                      value={editUserForm.companyId}
+                      onChange={(event) => setEditUserForm((prev) => ({ ...prev, companyId: event.target.value }))}
+                      required
+                    >
+                      <option value="">Selecione uma empresa...</option>
+                      {companyOptions.map((company) => (
+                        <option key={company.id} value={company.id}>
+                          {company.name}
+                        </option>
+                      ))}
+                    </select>
+                    {editSelectedCompany ? (
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {getServiceLabel(editSelectedCompany.aiType)} • {editSelectedCompany.active ? "empresa ativa" : "empresa inativa"}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                  <span>Criado em {new Date(selectedUser.createdAt).toLocaleString("pt-BR")}</span>
+                  <span>Atualizado em {new Date(selectedUser.updatedAt).toLocaleString("pt-BR")}</span>
+                </div>
+
+                <div className="flex gap-2">
+                  <Button type="submit">
+                    <Save className="mr-1.5 h-4 w-4" />
+                    Salvar
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() =>
+                      setEditUserForm({
+                        role: selectedUser.role,
+                        email: selectedUser.email,
+                        password: "",
+                        companyId: selectedUser.companyId ?? "",
+                        active: selectedUser.active,
+                      })
+                    }
+                  >
+                    Restaurar
+                  </Button>
+                  <Button type="button" variant="destructive" onClick={() => void handleDeleteUser()}>
+                    <Trash2 className="mr-1.5 h-4 w-4" />
+                    Excluir
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <EmptyState
+                icon={Users}
+                title="Nenhum usuario selecionado"
+                description="Escolha um usuario na lista para editar."
+              />
+            )}
+          </CardContent>
+        </Card>
 
         {feedback ? <FeedbackBox message={feedback} /> : null}
       </div>
