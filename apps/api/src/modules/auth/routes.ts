@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { env } from "../../config/env.js";
 import { prisma } from "../../lib/prisma.js";
 import { verifyPassword } from "../../lib/password.js";
 import { issueTokens, revokeRefreshToken, verifyRefreshToken } from "./token.js";
@@ -24,8 +25,12 @@ const AUTH_RATE_LIMIT = {
   }),
 };
 
+const AUTH_ROUTE_OPTIONS = env.RATE_LIMIT_ENABLED
+  ? { config: { rateLimit: AUTH_RATE_LIMIT } }
+  : {};
+
 export async function authRoutes(app: FastifyInstance): Promise<void> {
-  app.post("/auth/login", { config: { rateLimit: AUTH_RATE_LIMIT } }, async (request, reply) => {
+  app.post("/auth/login", AUTH_ROUTE_OPTIONS, async (request, reply) => {
     const parsed = loginSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ message: "Payload invalido", errors: parsed.error.flatten().fieldErrors });
@@ -71,7 +76,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/auth/refresh", { config: { rateLimit: AUTH_RATE_LIMIT } }, async (request, reply) => {
+  app.post("/auth/refresh", AUTH_ROUTE_OPTIONS, async (request, reply) => {
     const parsed = refreshSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ message: "Payload invalido" });
