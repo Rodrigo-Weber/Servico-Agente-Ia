@@ -26,6 +26,7 @@ export async function buildApp() {
       level: env.LOG_LEVEL,
     },
     disableRequestLogging: !env.LOG_REQUESTS,
+    trustProxy: env.NODE_ENV === "production",
   });
 
   // ── Security Headers ──
