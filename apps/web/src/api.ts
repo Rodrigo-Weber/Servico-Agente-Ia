@@ -24,7 +24,26 @@ import {
   MunicipioBA,
 } from "./types";
 
-const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? "http://localhost:3333" : "");
+function resolveApiUrl(): string {
+  const configuredUrl = import.meta.env.VITE_API_URL;
+  if (configuredUrl) {
+    return configuredUrl;
+  }
+
+  if (!import.meta.env.DEV) {
+    return "";
+  }
+
+  if (typeof window === "undefined") {
+    return "http://localhost:3333";
+  }
+
+  const protocol = window.location.protocol || "http:";
+  const hostname = window.location.hostname || "localhost";
+  return `${protocol}//${hostname}:3333`;
+}
+
+const API_URL = resolveApiUrl();
 export const UNAUTHORIZED_EVENT_NAME = "weber:unauthorized";
 
 export class ApiError extends Error {
